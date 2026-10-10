@@ -45,6 +45,11 @@ extern uint8_t global_critical_depth;
 #define FAULT_SIREN_MALFUNCTION             (1UL << 25)
 #define FAULT_HEARTBEAT_LOOP_WATCHDOG       (1UL << 26)
 #define FAULT_INTERRUPT_RATE_SOUND_DMA      (1UL << 27)
+// LionDriver safety supervisor (board/sys/safety_supervisor.h)
+#define FAULT_ECC_UNCORRECTABLE             (1UL << 28)
+#define FAULT_SAFETY_STATE_CORRUPT          (1UL << 29)
+#define FAULT_CODE_CRC_MISMATCH             (1UL << 30)
+#define FAULT_STARTUP_RAM_TEST              (1UL << 31)
 
 // Permanent faults
 #define PERMANENT_FAULTS 0U

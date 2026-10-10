@@ -20,21 +20,95 @@
 
 #include "board/sys/power_saving.h"
 
+#include "board/sys/safety_supervisor.h"
+#include "board/stm32h7/llsafety.h"
+
 #include "board/obj/gitversion.h"
 
 #include "board/can_comms.h"
 #include "board/main_comms.h"
 
+// ************************* LionDriver safety supervisor *************************
+// Technical safety concept LD-TSC-001, gap G1, layer 1. See board/sys/safety_supervisor.h.
+
+#define RAM_TEST_PASS 0x50415353U
+#define RAM_TEST_FAIL 0x4641494CU
+// read the whole application image (about 80 KB) about once per second at the 8 Hz tick
+#define CODE_CRC_CHUNK 10240U
+
+// defined by the linker script
+extern uint32_t startup_ram_test_result;
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _sdata[];
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _ebss[];
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _sitcmram[];
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _eitcmram[];
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _saxisram[];
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _eaxisram[];
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _ssram12[];
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _esram12[];
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _ssram4[];
+// cppcheck-suppress misra-c2012-8.11 ; linker symbols, the size is not known to C
+extern uint32_t _esram4[];
+
+static supervisor_state_t supervisor;
+static code_crc_state_t code_crc;
+static redundant_u32_t safety_mode_shadow;  // TSR-MCU-08: inverted copy of the active safety mode
+
+static void zero_words(volatile uint32_t *start, const volatile uint32_t *end) {
+  uint32_t words = (((uint32_t)end) - ((uint32_t)start)) / 4U;
+  for (uint32_t i = 0U; i < words; i++) {
+    start[i] = 0U;
+  }
+}
+
+static uint32_t pack_safety_mode(uint16_t mode, uint16_t param) {
+  return (((uint32_t)mode) << 16U) | ((uint32_t)param);
+}
+
+static void set_safety_hooks_checked(uint16_t mode, uint16_t param, int *err) {
+  ENTER_CRITICAL()
+  *err = set_safety_hooks(mode, param);
+  redundant_set(&safety_mode_shadow, pack_safety_mode(current_safety_mode, current_safety_param));
+  EXIT_CRITICAL()
+}
+
 // ****************************** safety mode ******************************
+
+bool is_car_safety_mode(uint16_t mode) {
+  return (mode != SAFETY_SILENT) &&
+         (mode != SAFETY_NOOUTPUT) &&
+         (mode != SAFETY_ALLOUTPUT) &&
+         (mode != SAFETY_ELM327);
+}
 
 // this is the only way to leave silent mode
 void set_safety_mode(uint16_t mode, uint16_t param) {
   uint16_t mode_copy = mode;
-  int err = set_safety_hooks(mode_copy, param);
+  uint16_t param_copy = param;
+
+  // TSR-MCU-04: once a fault has latched, no car safety mode until power cycle
+  supervisor_report_faults(&supervisor, faults);
+  if (is_car_safety_mode(mode_copy) && !supervisor_output_allowed(&supervisor)) {
+    print("Safety supervisor fault latched. Using NOOUTPUT\n");
+    mode_copy = SAFETY_NOOUTPUT;
+    param_copy = 0U;
+  }
+
+  int err;
+  set_safety_hooks_checked(mode_copy, param_copy, &err);
   if (err == -1) {
     print("Error: safety set mode failed. Falling back to SILENT\n");
     mode_copy = SAFETY_SILENT;
-    err = set_safety_hooks(mode_copy, 0U);
+    set_safety_hooks_checked(mode_copy, 0U, &err);
     // TERMINAL ERROR: we can't continue if SILENT safety mode isn't succesfully set
     assert_fatal(err == 0, "Error: Failed setting SILENT mode. Hanging\n");
   }
@@ -68,6 +142,8 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
       can_silent = false;
       break;
     default:
+      // TSR-MCU-05: the relay closes only in car modes, so the watchdog runs from the first one on
+      iwdg_start();
       set_intercept_relay(true, false);
       heartbeat_counter = 0U;
       heartbeat_lost = false;
@@ -78,18 +154,30 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
   can_init_all();
 }
 
-bool is_car_safety_mode(uint16_t mode) {
-  return (mode != SAFETY_SILENT) &&
-         (mode != SAFETY_NOOUTPUT) &&
-         (mode != SAFETY_ALLOUTPUT) &&
-         (mode != SAFETY_ELM327);
-}
-
 // ***************************** main code *****************************
 
 // cppcheck-suppress unusedFunction ; used in headers not included in cppcheck
 // cppcheck-suppress misra-c2012-8.4
 void __initialize_hardware_early(void) {
+  // TSR-MCU-10: test the RAM that will hold .data and .bss before the C runtime initializes it.
+  // Runs on the reset stack only; the result goes to SRAM4, which the runtime does not touch.
+  uint32_t words = (((uint32_t)_ebss) - ((uint32_t)_sdata)) / 4U;
+  startup_ram_test_result = march_c_minus(_sdata, words) ? RAM_TEST_PASS : RAM_TEST_FAIL;
+  // TSR-MCU-07: after power-up the RAM holds random data with random ECC bits, so reading a word
+  // that was never written reports an ECC error. Zero the sections the C runtime leaves alone.
+  // The bootloader magic and fault cookie live inside SRAM4 and must survive. They are accessed
+  // through volatile pointers: the compiler cannot see that the zeroed region overlaps them and
+  // would otherwise drop the restore.
+  volatile uint32_t *boot_mode_ptr = &enter_bootloader_mode;
+  volatile uint32_t *cookie_ptr = &fault_cookie;
+  uint32_t boot_mode = *boot_mode_ptr;
+  uint32_t cookie = *cookie_ptr;
+  zero_words(_sitcmram, _eitcmram);
+  zero_words(_saxisram, _eaxisram);
+  zero_words(_ssram12, _esram12);
+  zero_words(_ssram4, _esram4);
+  *boot_mode_ptr = boot_mode;
+  *cookie_ptr = cookie;
   early_initialization();
 }
 
@@ -101,6 +189,38 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 // go into SILENT when heartbeat isn't received for this amount of seconds.
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
+
+// Called from the 8 Hz tick, after the 1 Hz housekeeping
+static void safety_supervisor_tick(void) {
+  // TSR-MCU-08: the active safety mode must match its inverted-copy shadow
+  ENTER_CRITICAL()
+  bool mode_intact = redundant_valid(&safety_mode_shadow) &&
+                     (safety_mode_shadow.value == pack_safety_mode(current_safety_mode, current_safety_param));
+  EXIT_CRITICAL()
+  if (!mode_intact) {
+    fault_occurred(FAULT_SAFETY_STATE_CORRUPT);
+  }
+
+  // TSR-MCU-09: application image integrity
+  if (code_crc_step(&code_crc, CODE_CRC_CHUNK) == CODE_CRC_MISMATCH) {
+    fault_occurred(FAULT_CODE_CRC_MISMATCH);
+  }
+
+  // TSR-MCU-04: an escalated fault ends controls and opens the relay until power cycle
+  supervisor_report_faults(&supervisor, faults);
+  if (!supervisor_output_allowed(&supervisor)) {
+    controls_allowed = false;
+    if (is_car_safety_mode(current_safety_mode)) {
+      print("Safety supervisor fault latched. Entering NOOUTPUT\n");
+      set_safety_mode(SAFETY_NOOUTPUT, 0U);
+    }
+  }
+
+  // TSR-MCU-05/06: refresh the watchdog only if the main loop and housekeeping ran
+  if (supervisor_tick(&supervisor)) {
+    iwdg_refresh();
+  }
+}
 
 // called at 8Hz
 static void tick_handler(void) {
@@ -240,7 +360,10 @@ static void tick_handler(void) {
 
       // synchronous safety check
       safety_tick();
+      supervisor_housekeeping_done(&supervisor);
     }
+
+    safety_supervisor_tick();
 
     loop_counter++;
     loop_counter %= 8U;
@@ -249,6 +372,8 @@ static void tick_handler(void) {
 }
 
 int main(void) {
+  supervisor_init(&supervisor);
+
   // Init interrupt table
   init_interrupts(true);
 
@@ -290,6 +415,28 @@ int main(void) {
   if (current_board->has_fan) {
     fan_init();
   }
+
+  // LionDriver safety supervisor (TSC LD-TSC-001, G1 layer 1)
+  if (startup_ram_test_result != RAM_TEST_PASS) {
+    print("Startup RAM test failed\n");
+    fault_occurred(FAULT_STARTUP_RAM_TEST);
+  }
+  if (iwdg_caused_reset()) {
+    print("Last reset was caused by the independent watchdog\n");
+  }
+  if (!bor_enabled()) {
+    print("WARNING: brown-out reset is disabled in the option bytes\n");
+  }
+  // the signed length is stored in the image's first word (see board/crypto/sign.py)
+  uint32_t app_len = (uint32_t)_app_start[0];
+  if ((app_len < 8U) || (app_len > 0xE0000U)) {
+    print("Application image length invalid\n");
+    fault_occurred(FAULT_CODE_CRC_MISMATCH);
+    app_len = 8U;
+  }
+  code_crc_init(&code_crc, (const uint8_t *)_app_start, app_len);
+  ramecc_init();
+  supervisor_report_faults(&supervisor, faults);
 
   // init to SILENT and can silent
   set_safety_mode(SAFETY_SILENT, 0U);
@@ -337,6 +484,7 @@ int main(void) {
     if (!power_save_enabled) {
       // useful for debugging, fade breaks = panda is overloaded
       for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += 1U) {
+        supervisor_checkpoint(&supervisor, SUPERVISOR_CP_MAIN_LOOP);
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
@@ -344,12 +492,14 @@ int main(void) {
       }
 
       for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= 1U) {
+        supervisor_checkpoint(&supervisor, SUPERVISOR_CP_MAIN_LOOP);
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
         delay((MAX_LED_FADE - fade) >> 4);
       }
     } else {
+      supervisor_checkpoint(&supervisor, SUPERVISOR_CP_MAIN_LOOP);
       if ((hw_type == HW_TYPE_CUATRO) && !current_board->read_som_gpio()) {
         assert_fatal(current_safety_mode == SAFETY_SILENT, "Error: Entering low power mode while not in SAFETY_SILENT. Hanging\n");
         enter_stop_mode(); // deep sleep, wakes on CAN or SBU activity

@@ -55,6 +55,7 @@ ENTRY(Reset_Handler)
 /* Highest address of the user mode stack */
 enter_bootloader_mode = 0x38001FFC;
 fault_cookie = 0x38003FFC;
+startup_ram_test_result = 0x38003FF8; /* LionDriver: written by the startup RAM test before C init */
 
 _estack = 0x20020000;    /* end of RAM */
 _app_start = 0x08020000; /* Reserve Sector 0(128K) for bootloader */
@@ -190,25 +191,37 @@ SECTIONS
   .itcmram (NOLOAD) :
   {
     . = ALIGN(4);
+    _sitcmram = .;  /* LionDriver: zeroed at startup so RAM ECC never sees uninitialised words */
     *(.itcmram*)
+    . = ALIGN(4);
+    _eitcmram = .;
   } >ITCMRAM
 
   .axisram (NOLOAD) :
   {
     . = ALIGN(4);
+    _saxisram = .;  /* LionDriver: zeroed at startup so RAM ECC never sees uninitialised words */
     *(.axisram*)
+    . = ALIGN(4);
+    _eaxisram = .;
   } >AXISRAM
 
   .sram12 (NOLOAD) :
   {
     . = ALIGN(4);
+    _ssram12 = .;  /* LionDriver: zeroed at startup so RAM ECC never sees uninitialised words */
     *(.sram12*)
+    . = ALIGN(4);
+    _esram12 = .;
   } >SRAM12
 
   .sram4 (NOLOAD) :
   {
     . = ALIGN(4);
+    _ssram4 = .;  /* LionDriver: zeroed at startup so RAM ECC never sees uninitialised words */
     *(.sram4*)
+    . = ALIGN(4);
+    _esram4 = .;
   } >SRAM4
 
   .backup_sram (NOLOAD) :
