@@ -57,6 +57,9 @@ extern uint8_t global_critical_depth;
 extern uint8_t fault_status;
 extern uint32_t faults;
 
+typedef void (*fault_hook_t)(uint32_t fault);
+extern fault_hook_t fault_hook;
+
 void fault_occurred(uint32_t fault);
 void fault_recovered(uint32_t fault);
 

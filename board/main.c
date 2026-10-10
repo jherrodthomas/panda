@@ -70,6 +70,16 @@ static void zero_words(volatile uint32_t *start, const volatile uint32_t *end) {
   }
 }
 
+// TSR-MCU-04: block actuation the moment an escalated fault is recorded. The TX hooks refuse every
+// actuating frame without controls, and set_safety_mode refuses car modes once the latch is set.
+// The relay is released at the next tick (<= 125 ms), in safety_supervisor_tick.
+static void supervisor_fault_hook(uint32_t fault) {
+  supervisor_report_faults(&supervisor, fault);
+  if (!supervisor_output_allowed(&supervisor)) {
+    controls_allowed = false;
+  }
+}
+
 static uint32_t pack_safety_mode(uint16_t mode, uint16_t param) {
   return (((uint32_t)mode) << 16U) | ((uint32_t)param);
 }
@@ -373,6 +383,7 @@ static void tick_handler(void) {
 
 int main(void) {
   supervisor_init(&supervisor);
+  fault_hook = supervisor_fault_hook;
 
   // Init interrupt table
   init_interrupts(true);
