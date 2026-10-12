@@ -26,6 +26,9 @@ HANG_IRQ_DISABLED = 3
 # relay drive release and USB polling. TSR-501 requires 0.1 s (deviation D-1, accepted as
 # interim); tighten this when the watchdog is fed from the >= 50 Hz safety task.
 RESET_BUDGET_S = float(os.environ.get("WATCHDOG_RESET_BUDGET_S", "0.25"))
+# A tick hang starts only at the next 8 Hz tick, up to one tick period after the request;
+# that wait is not part of the detection time, so it is added to the budget for that mode.
+TICK_PERIOD_S = 0.125
 # smallest SBU voltage change counted as a change of relay drive
 SBU_DELTA_V = float(os.environ.get("WATCHDOG_SBU_DELTA_V", "0.3"))
 POLL_TIMEOUT_S = 2.0
@@ -54,7 +57,7 @@ class TestHardwareWatchdog(PandaTestCase):
     self.assertTrue(channels, f"relay drive not visible on the SBU lines (released {released}, driven {driven})")
     return released, channels
 
-  def _inject_and_time_release(self, mode):
+  def _inject_and_time_release(self, mode, start_delay_s=0.0):
     p, jungle = self.p, self.panda_jungle
     released, channels = self._relay_driven_channels()
 
@@ -72,7 +75,8 @@ class TestHardwareWatchdog(PandaTestCase):
         break
     self.assertIsNotNone(elapsed, f"relay drive not released within {POLL_TIMEOUT_S} s")
     print(f"\nfault injection mode {mode}: relay drive released after {elapsed * 1000:.1f} ms")
-    self.assertLessEqual(elapsed, RESET_BUDGET_S, f"released after {elapsed:.3f} s, budget {RESET_BUDGET_S} s")
+    budget = RESET_BUDGET_S + start_delay_s
+    self.assertLessEqual(elapsed, budget, f"released after {elapsed:.3f} s, budget {budget:.3f} s")
 
     # the panda must come back up after the watchdog reset, in SILENT
     p.reconnect()
@@ -86,7 +90,7 @@ class TestHardwareWatchdog(PandaTestCase):
 
   @panda_test(needs_jungle=True, timeout=30)
   def test_tick_hang(self):
-    self._inject_and_time_release(HANG_TICK)
+    self._inject_and_time_release(HANG_TICK, start_delay_s=TICK_PERIOD_S)
 
   @panda_test(needs_jungle=True, timeout=30)
   def test_hang_with_interrupts_disabled(self):

@@ -106,6 +106,15 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
 
+// marks main-loop progress for the hardware watchdog; called often enough that an injected
+// hang starts within microseconds of the request, not at the end of an LED fade cycle
+static void main_loop_progress(void) {
+  hw_watchdog_main_loop_alive();
+  #ifdef LIONDRIVER_FAULT_INJECTION
+  fault_injection_main_loop();
+  #endif
+}
+
 // called at 8Hz
 static void tick_handler(void) {
   if (TICK_TIMER->SR != 0U) {
@@ -337,10 +346,7 @@ int main(void) {
 
   // LED should keep on blinking all the time
   while (true) {
-    hw_watchdog_main_loop_alive();
-    #ifdef LIONDRIVER_FAULT_INJECTION
-    fault_injection_main_loop();
-    #endif
+    main_loop_progress();
     #ifdef ALLOW_DEBUG
     if (stop_mode_requested) {
       enter_stop_mode();
@@ -349,7 +355,7 @@ int main(void) {
     if (!power_save_enabled) {
       // useful for debugging, fade breaks = panda is overloaded
       for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += 1U) {
-        hw_watchdog_main_loop_alive();
+        main_loop_progress();
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
@@ -357,7 +363,7 @@ int main(void) {
       }
 
       for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= 1U) {
-        hw_watchdog_main_loop_alive();
+        main_loop_progress();
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
