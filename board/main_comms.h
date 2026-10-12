@@ -74,6 +74,12 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
       resp[3] = ((time & 0xFF000000U) >> 24U);
       resp_len = 4U;
       break;
+    #ifdef LIONDRIVER_FAULT_INJECTION
+    // **** 0xa9: LionDriver fault injection (FAULT_INJECTION debug builds only)
+    case 0xa9:
+      fault_injection_request(req->param1);
+      break;
+    #endif
     // **** 0xb0: set IR power
     case 0xb0:
       current_board->set_ir_power(req->param1);

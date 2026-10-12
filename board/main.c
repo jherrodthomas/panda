@@ -6,6 +6,9 @@
 #include "board/drivers/usb.h"
 #include "board/drivers/simple_watchdog.h"
 #include "board/drivers/hw_watchdog.h"
+#ifdef LIONDRIVER_FAULT_INJECTION
+#include "board/drivers/fault_injection.h"
+#endif
 #include "board/drivers/bootkick.h"
 
 #include "board/early_init.h"
@@ -119,6 +122,9 @@ static void tick_handler(void) {
     harness_tick();
     simple_watchdog_kick();
     hw_watchdog_tick();
+    #ifdef LIONDRIVER_FAULT_INJECTION
+    fault_injection_tick();
+    #endif
     sound_tick();
 
     if (relay_malfunction_prev != relay_malfunction) {
@@ -332,6 +338,9 @@ int main(void) {
   // LED should keep on blinking all the time
   while (true) {
     hw_watchdog_main_loop_alive();
+    #ifdef LIONDRIVER_FAULT_INJECTION
+    fault_injection_main_loop();
+    #endif
     #ifdef ALLOW_DEBUG
     if (stop_mode_requested) {
       enter_stop_mode();
