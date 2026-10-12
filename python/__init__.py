@@ -150,6 +150,7 @@ class Panda:
   HEALTH_FLAG_HARDFAULT_RESET = 1 << 8
   HEALTH_FLAG_WATCHDOG_RESET = 1 << 9
   HEALTH_FLAG_EPS_FAULT = 1 << 10
+  HEALTH_FLAG_TX_RATE_EXCEEDED = 1 << 11
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
   SUPPORTED_DEVICES = H7_DEVICES
@@ -559,6 +560,7 @@ class Panda:
       "temperature": a[20] - 40.0,
       "watchdog_reset": bool(flags & self.HEALTH_FLAG_WATCHDOG_RESET),
       "eps_fault": bool(flags & self.HEALTH_FLAG_EPS_FAULT),
+      "tx_rate_exceeded": bool(flags & self.HEALTH_FLAG_TX_RATE_EXCEEDED),
       "requests_rejected": a[21],
     }
 
