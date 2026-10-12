@@ -5,6 +5,7 @@
 #include "board/drivers/pwm.h"
 #include "board/drivers/usb.h"
 #include "board/drivers/simple_watchdog.h"
+#include "board/stm32h7/lliwdg.h"
 #include "board/drivers/bootkick.h"
 
 #include "board/early_init.h"
@@ -68,6 +69,8 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
       can_silent = false;
       break;
     default:
+      // the relay is driven from here on: run the independent watchdog (cannot be stopped until reset)
+      iwdg_start();
       set_intercept_relay(true, false);
       heartbeat_counter = 0U;
       heartbeat_lost = false;
@@ -102,6 +105,9 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
 
+// incremented by the main loop; the tick feeds the independent watchdog only if it has changed
+static volatile uint32_t main_loop_progress = 0U;
+
 // called at 8Hz
 static void tick_handler(void) {
   if (TICK_TIMER->SR != 0U) {
@@ -117,6 +123,13 @@ static void tick_handler(void) {
     fan_tick();
     harness_tick();
     simple_watchdog_kick();
+
+    // feed the independent watchdog only if the main loop ran since the last tick
+    static uint32_t main_loop_progress_prev = 0U;
+    if (main_loop_progress != main_loop_progress_prev) {
+      iwdg_feed();
+    }
+    main_loop_progress_prev = main_loop_progress;
     sound_tick();
 
     if (relay_malfunction_prev != relay_malfunction) {
@@ -323,6 +336,10 @@ int main(void) {
     reset_flags |= HEALTH_FLAG_HARDFAULT_RESET;
   }
   fault_cookie = 0U;
+  if ((RCC->RSR & RCC_RSR_IWDG1RSTF) != 0U) {
+    reset_flags |= HEALTH_FLAG_WATCHDOG_RESET;
+  }
+  RCC->RSR |= RCC_RSR_RMVF;  // clear the reset-cause flags so the next reset reports its own cause
 
   print("**** INTERRUPTS ON ****\n");
   enable_interrupts();
@@ -331,12 +348,16 @@ int main(void) {
   while (true) {
     #ifdef ALLOW_DEBUG
     if (stop_mode_requested) {
+      if (iwdg_running) {
+        NVIC_SystemReset();  // as below: stop mode only from a boot without the independent watchdog
+      }
       enter_stop_mode();
     }
     #endif
     if (!power_save_enabled) {
       // useful for debugging, fade breaks = panda is overloaded
       for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += 1U) {
+        main_loop_progress += 1U;
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
@@ -344,6 +365,7 @@ int main(void) {
       }
 
       for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= 1U) {
+        main_loop_progress += 1U;
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
@@ -352,11 +374,17 @@ int main(void) {
     } else {
       if ((hw_type == HW_TYPE_CUATRO) && !current_board->read_som_gpio()) {
         assert_fatal(current_safety_mode == SAFETY_SILENT, "Error: Entering low power mode while not in SAFETY_SILENT. Hanging\n");
+        if (iwdg_running) {
+          // the independent watchdog keeps counting in stop mode and cannot be stopped; reset first,
+          // so stop mode is entered from a boot in which it never started
+          NVIC_SystemReset();
+        }
         enter_stop_mode(); // deep sleep, wakes on CAN or SBU activity
         assert_fatal(false, "Error: enter_stop_mode returned after system reset. Hanging\n");
       }
       // cppcheck-suppress misra-c2012-17.3 ; CMSIS __WFI macro expands to inline asm
       __WFI();
+      main_loop_progress += 1U;
       SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
     }
   }
