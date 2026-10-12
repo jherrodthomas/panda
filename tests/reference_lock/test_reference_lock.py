@@ -36,6 +36,8 @@ bool allowed(uint8_t request, uint16_t param1, uint16_t param2) {
   return reference_request_allowed(&req);
 }
 void set_mode(uint16_t mode) { current_safety_mode = mode; }
+uint16_t rejected(void) { return reference_requests_rejected; }
+void set_rejected(uint16_t n) { reference_requests_rejected = n; }
 """
 
 SILENT, HONDA, TOYOTA, ELM327, ALLOUTPUT, NOOUTPUT = 0, 1, 2, 3, 17, 19
@@ -57,6 +59,8 @@ def build(tmp, name, defines):
   so.allowed.restype = ctypes.c_bool
   so.allowed.argtypes = [ctypes.c_uint8, ctypes.c_uint16, ctypes.c_uint16]
   so.set_mode.argtypes = [ctypes.c_uint16]
+  so.rejected.restype = ctypes.c_uint16
+  so.set_rejected.argtypes = [ctypes.c_uint16]
   return so
 
 
@@ -110,6 +114,19 @@ class TestReferenceLock(unittest.TestCase):
     for mode in (SILENT, NOOUTPUT, ELM327):
       self.ref.set_mode(mode)
       self.assertTrue(self.ref.allowed(0xd1, 1, 0))
+
+  def test_rejections_counted_for_the_health_packet(self):
+    self.ref.set_rejected(0)
+    self.ref.set_mode(TOYOTA)
+    self.assertTrue(self.ref.allowed(0xdc, NOOUTPUT, 0))
+    self.assertEqual(self.ref.rejected(), 0, "an accepted request must not be counted")
+    self.assertFalse(self.ref.allowed(0xdf, 1, 0))
+    self.assertFalse(self.ref.allowed(0xe7, 1, 0))
+    self.assertEqual(self.ref.rejected(), 2)
+    # saturates instead of wrapping to 0
+    self.ref.set_rejected(0xFFFF)
+    self.assertFalse(self.ref.allowed(0xdf, 1, 0))
+    self.assertEqual(self.ref.rejected(), 0xFFFF)
 
   def test_pandad_onroad_requests_allowed(self):
     self.ref.set_mode(TOYOTA)

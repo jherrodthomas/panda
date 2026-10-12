@@ -12,6 +12,8 @@ bool is_car_safety_mode(uint16_t mode);
 // Internal safety mode changes (heartbeat loss, faults) do not pass through here and are not affected.
 #ifdef LIONDRIVER_REFERENCE
 #define LIONDRIVER_REFERENCE_TOYOTA_PARAM 73U  // EPS factor 73, no flags
+// refused requests since reset, reported in the health packet (saturating)
+static uint16_t reference_requests_rejected = 0U;
 
 static bool reference_request_allowed(const ControlPacket_t *req) {
   bool allowed = true;
@@ -49,7 +51,9 @@ static bool reference_request_allowed(const ControlPacket_t *req) {
       break;
   }
   if (!allowed) {
-    // reported on the debug console only; reporting to the host needs a health packet field (open item)
+    if (reference_requests_rejected < 0xFFFFU) {
+      reference_requests_rejected += 1U;
+    }
     print("Request rejected (LionDriver reference build): ");
     puth(req->request);
     print("\n");
