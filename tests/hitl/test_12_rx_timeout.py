@@ -4,11 +4,13 @@ Verifies SWSR-401/401a and SWSR-306 on the device (LionDriver WP-V-05). Needs:
   - a panda flashed with the LionDriver firmware (any build; 100 Hz safety task, opendbc with the 5-period
     Toyota RX timeout)
   - a panda jungle on the default harness orientation, which sends the Toyota RX messages on bus 0
-  - HITL=1 in the environment
+  - HITL=1 in the environment; REFERENCE_BUILD=1 for a LIONDRIVER_REFERENCE=1 build, whose Toyota RX set also
+    contains EPS_STATUS and PCM_CRUISE_2 (TSR-110, TSR-401)
 
 The jungle plays the car: it sends the four Toyota RX check messages at their nominal rates, the test engages
 with a PCM cruise rising edge, then stops one message and measures the time until controls_allowed drops.
 """
+import os
 import threading
 import time
 
@@ -23,6 +25,8 @@ DBC = "toyota_nodsu_pt_generated"
 
 # message name -> nominal rate (Hz), as declared in opendbc/safety/modes/toyota.h
 RX_MSGS = {"WHEEL_SPEEDS": 83, "STEER_TORQUE_SENSOR": 50, "PCM_CRUISE": 33, "BRAKE_MODULE": 40}
+if os.environ.get("REFERENCE_BUILD") == "1":
+  RX_MSGS |= {"EPS_STATUS": 25, "PCM_CRUISE_2": 33}
 TIMEOUT_PERIODS = 5
 SAFETY_TASK_PERIOD_S = 0.010
 # TSR-401: worst-case detection <= 0.2 s. The measurement adds USB polling of the health packet and the
@@ -38,6 +42,7 @@ class CarSim:
     self.jungle = jungle
     self.packer = CANPacker(DBC)
     self.cruise_active = False
+    self.lka_state = 5  # active
     self.stopped = set()
     self._run = threading.Event()
     self._thread = None
@@ -46,6 +51,8 @@ class CarSim:
     values = {}
     if name == "PCM_CRUISE":
       values = {"CRUISE_ACTIVE": int(self.cruise_active), "GAS_RELEASED": 1}
+    elif name == "EPS_STATUS":
+      values = {"LKA_STATE": self.lka_state}
     addr, dat, bus = self.packer.make_can_msg(name, 0, values)
     return addr, dat, bus
 

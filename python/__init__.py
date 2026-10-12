@@ -149,6 +149,7 @@ class Panda:
   HEALTH_FLAG_NMI_RESET = 1 << 7
   HEALTH_FLAG_HARDFAULT_RESET = 1 << 8
   HEALTH_FLAG_WATCHDOG_RESET = 1 << 9
+  HEALTH_FLAG_EPS_FAULT = 1 << 10
 
   H7_DEVICES = [HW_TYPE_RED_PANDA, HW_TYPE_TRES, HW_TYPE_CUATRO, HW_TYPE_BODY]
   SUPPORTED_DEVICES = H7_DEVICES
@@ -557,6 +558,7 @@ class Panda:
       "sound_output_level": a[19],
       "temperature": a[20] - 40.0,
       "watchdog_reset": bool(flags & self.HEALTH_FLAG_WATCHDOG_RESET),
+      "eps_fault": bool(flags & self.HEALTH_FLAG_EPS_FAULT),
       "requests_rejected": a[21],
     }
 

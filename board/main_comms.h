@@ -22,6 +22,7 @@ static int get_health_pkt(void *dat) {
   health->flags_pkt |= safety_rx_checks_invalid ? HEALTH_FLAG_SAFETY_RX_CHECKS_INVALID : 0U;
   health->flags_pkt |= bootkick_reset_triggered ? HEALTH_FLAG_SOM_RESET_TRIGGERED : 0U;
   health->flags_pkt |= reset_flags;
+  health->flags_pkt |= safety_eps_fault ? HEALTH_FLAG_EPS_FAULT : 0U;
 #ifdef LIONDRIVER_REFERENCE
   health->requests_rejected_pkt = reference_requests_rejected;
 #else
