@@ -28,6 +28,10 @@ static bool reference_request_allowed(const ControlPacket_t *req) {
     case 0xdfU:
       allowed = false;
       break;
+    case 0xd1U:
+      // softloader entry (param 1, SWSR-511a); bootloader entry (param 0) is already debug-only
+      allowed = !(car_mode && (req->param1 == 1U));
+      break;
     case 0xc5U:
     case 0xd8U:
     case 0xdbU:

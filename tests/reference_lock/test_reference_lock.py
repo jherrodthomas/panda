@@ -104,6 +104,13 @@ class TestReferenceLock(unittest.TestCase):
         self.ref.set_mode(mode)
         self.assertTrue(self.ref.allowed(request, 1, 1), hex(request))
 
+  def test_softloader_entry_refused_in_car_mode(self):
+    self.ref.set_mode(TOYOTA)
+    self.assertFalse(self.ref.allowed(0xd1, 1, 0))
+    for mode in (SILENT, NOOUTPUT, ELM327):
+      self.ref.set_mode(mode)
+      self.assertTrue(self.ref.allowed(0xd1, 1, 0))
+
   def test_pandad_onroad_requests_allowed(self):
     self.ref.set_mode(TOYOTA)
     for request in ALWAYS_ALLOWED:
