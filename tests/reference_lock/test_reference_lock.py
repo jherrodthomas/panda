@@ -148,7 +148,7 @@ class TestReferenceLock(unittest.TestCase):
 
   def test_reference_build_reported_in_health_flags(self):
     # the host refuses a car safety mode without this flag (TSR-619); it must be set in the reference build only
-    reference_build_flag = 1 << 11
+    reference_build_flag = 1 << 12
     self.assertEqual(self.ref.build_flags(), reference_build_flag)
     self.assertEqual(self.plain.build_flags(), 0)
 
@@ -156,12 +156,12 @@ class TestReferenceLock(unittest.TestCase):
     # read the sources rather than import the library (it needs USB and opendbc)
     with open(os.path.join(PANDA_DIR, "python", "__init__.py")) as f:
       lib = f.read()
-    self.assertRegex(lib, r"HEALTH_FLAG_REFERENCE_BUILD = 1 << 11\n")
+    self.assertRegex(lib, r"HEALTH_FLAG_REFERENCE_BUILD = 1 << 12\n")
     self.assertIn('"reference_build": bool(flags & self.HEALTH_FLAG_REFERENCE_BUILD)', lib)
     with open(os.path.join(PANDA_DIR, "board", "health.h")) as f:
       flags = re.findall(r"#define (HEALTH_FLAG_\w+)\s+\(\(?(?:uint16_t\))?1U << (\d+)\)", f.read())
     bits = [int(b) for _, b in flags]
-    self.assertIn(("HEALTH_FLAG_REFERENCE_BUILD", "11"), flags)
+    self.assertIn(("HEALTH_FLAG_REFERENCE_BUILD", "12"), flags)
     self.assertEqual(len(bits), len(set(bits)), f"health flag bits must be unique: {flags}")
 
   def test_pandad_onroad_requests_allowed(self):
