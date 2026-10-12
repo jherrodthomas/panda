@@ -207,6 +207,12 @@ typedef struct simple_watchdog_state_t {
 void simple_watchdog_kick(void);
 void simple_watchdog_init(uint32_t fault, uint32_t threshold);
 
+// ******************** hw_watchdog ********************
+
+void hw_watchdog_start(void);
+void hw_watchdog_main_loop_alive(void);
+void hw_watchdog_tick(void);
+
 // ******************** spi ********************
 
 // got max rate from hitting a non-existent endpoint

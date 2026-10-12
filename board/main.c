@@ -70,8 +70,6 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
       break;
     default:
       set_intercept_relay(true, false);
-      // the relay can now be held energised: from here on, a hang must end in a reset
-      hw_watchdog_start();
       heartbeat_counter = 0U;
       heartbeat_lost = false;
       current_board->set_can_mode(CAN_MODE_NORMAL);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "board/drivers/drivers.h"
+#include "board/drivers/hw_watchdog.h"
 
 struct harness_t harness;
 
@@ -14,6 +15,9 @@ void set_intercept_relay(bool intercept, bool ignition_relay) {
 
   if (drive_relay || ignition_relay) {
     harness.relay_driven = true;
+    // once the relay can be held energised, a hang must end in a reset; this covers every
+    // path that drives the relay, including the 0xc5 debug command (LionDriver TSR-501)
+    hw_watchdog_start();
   }
 
   // wait until we're not reading the analog voltages anymore

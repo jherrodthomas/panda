@@ -1,5 +1,7 @@
 #pragma once
 
+// declarations are in board/drivers/drivers.h, included before this header
+
 // ******************** hardware watchdog (IWDG) ********************
 //
 // LionDriver: independent hardware watchdog for the safety MCU (TSR-502, GAP-07).
@@ -9,8 +11,9 @@
 // cannot be stopped except by a reset. A reset floats all GPIOs, which de-energises the
 // harness relay and restores the stock camera path (TSR-506), and restarts in SILENT.
 //
-// It is started the first time a safety mode that drives the intercept relay is set,
-// because only then can a hang leave the relay energised (GAP-43). It is fed from the 8 Hz
+// It is started by set_intercept_relay() the first time the relay is driven, by any path
+// (a relay-driving safety mode or the 0xc5 debug command), because only then can a hang
+// leave the relay energised (GAP-43). It is fed from the 8 Hz
 // tick, and only when the main loop has run since the previous tick, so a stall of the
 // tick interrupt or of the main loop both end in a reset.
 //
@@ -22,9 +25,9 @@
 //  - TSR-501 requires a reset within 0.1 s of a stall (SG-07 forwarding budget). 175 ms
 //    meets the SG-01 budget (0.5 s) only. Reaching 0.1 s needs a feed source faster than
 //    the 8 Hz tick, i.e. the >= 50 Hz periodic safety task of TSR-401/TSR-519.
-//  - TSR-501 requires the watchdog to start before the application runs. Here it starts
-//    when the relay is first driven: in SILENT the relay is never energised, so a hang
-//    there is already safe, and an idle device keeps its power-save and stop modes.
+//  - The watchdog runs in normal (not window) mode; HWSR-501b asks for window mode.
+//  - Start on first relay drive instead of before the application (TSR-501 v0.3) was
+//    accepted on 2026-10-12; TSR-501 is being amended to match.
 
 #define HW_WATCHDOG_KEY_START 0xCCCCU
 #define HW_WATCHDOG_KEY_UNLOCK 0x5555U
@@ -37,7 +40,7 @@
 static bool hw_watchdog_running = false;
 static volatile bool hw_watchdog_main_loop_ran = false;
 
-static void hw_watchdog_start(void) {
+void hw_watchdog_start(void) {
   if (!hw_watchdog_running) {
     IND_WDG->KR = HW_WATCHDOG_KEY_START;
     IND_WDG->KR = HW_WATCHDOG_KEY_UNLOCK;
@@ -50,12 +53,12 @@ static void hw_watchdog_start(void) {
 }
 
 // called on every main-loop iteration
-static void hw_watchdog_main_loop_alive(void) {
+void hw_watchdog_main_loop_alive(void) {
   hw_watchdog_main_loop_ran = true;
 }
 
 // called from the 8 Hz tick
-static void hw_watchdog_tick(void) {
+void hw_watchdog_tick(void) {
   if (hw_watchdog_running && hw_watchdog_main_loop_ran) {
     hw_watchdog_main_loop_ran = false;
     IND_WDG->KR = HW_WATCHDOG_KEY_FEED;
