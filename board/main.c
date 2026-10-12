@@ -6,6 +6,7 @@
 #include "board/drivers/usb.h"
 #include "board/drivers/simple_watchdog.h"
 #include "board/drivers/hw_watchdog.h"
+#include "board/drivers/heartbeat_monitor.h"
 #ifdef LIONDRIVER_FAULT_INJECTION
 #include "board/drivers/fault_injection.h"
 #endif
@@ -122,6 +123,10 @@ static void safety_task_handler(void) {
   if (SAFETY_TASK_TIMER->SR != 0U) {
     // RX timeout and validity checks of the safety mode
     safety_tick();
+    // LionDriver TSR-407: no SoC heartbeat for > 0.3 s in a car mode revokes all authority
+    if (heartbeat_monitor_tick() && is_car_safety_mode(current_safety_mode)) {
+      controls_allowed = false;
+    }
     hw_watchdog_tick();
     #ifdef LIONDRIVER_FAULT_INJECTION
     fault_injection_safety_task();

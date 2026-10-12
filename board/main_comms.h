@@ -296,6 +296,7 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case 0xf3:
       {
         heartbeat_counter = 0U;
+        heartbeat_monitor_reset();
         heartbeat_lost = false;
         heartbeat_disabled = false;
         heartbeat_engaged = (req->param1 == 1U);

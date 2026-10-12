@@ -86,11 +86,14 @@ class TestToyotaRxTimeout(PandaTestCase):
     time.sleep(0.5)
 
   def _engage(self):
+    # keep the heartbeat younger than 0.3 s throughout (TSR-407), or the panda revokes authority
+    self.p.send_heartbeat(engaged=False)
     self.sim.cruise_active = False
     time.sleep(0.1)
+    self.p.send_heartbeat(engaged=False)
     self.sim.cruise_active = True
-    self.p.send_heartbeat(engaged=True)
     time.sleep(0.1)
+    self.p.send_heartbeat(engaged=True)
     return self.p.health()["controls_allowed"]
 
   def test_engages_with_all_messages(self):
