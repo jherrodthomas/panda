@@ -5,6 +5,16 @@
 
 bool is_car_safety_mode(uint16_t mode);
 
+// Health flags that identify the build (TSR-514, TSR-619): the host checks HEALTH_FLAG_REFERENCE_BUILD before it
+// configures a car safety mode, so firmware without the reference lock cannot be used for engagement.
+static inline uint16_t reference_build_health_flags(void) {
+#ifdef LIONDRIVER_REFERENCE
+  return HEALTH_FLAG_REFERENCE_BUILD;
+#else
+  return 0U;
+#endif
+}
+
 // LionDriver reference build (TSR-512/513, SWSR-512/512a/513): the 2020 Corolla LE TSS2 reference
 // configuration. The host may only request SILENT, NOOUTPUT, ELM327 and TOYOTA with the reference
 // parameter; once TOYOTA is active only NOOUTPUT or SILENT. The alternative experience stays at its

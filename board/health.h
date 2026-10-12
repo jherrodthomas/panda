@@ -11,6 +11,7 @@
 #define HEALTH_FLAG_HARDFAULT_RESET          ((uint16_t)1U << 8)
 #define HEALTH_FLAG_WATCHDOG_RESET           ((uint16_t)1U << 9)  // LionDriver: last reset by the IWDG (TSR-501)
 #define HEALTH_FLAG_EPS_FAULT                ((uint16_t)1U << 10) // LionDriver: lateral actuation refused, EPS fault (TSR-110)
+#define HEALTH_FLAG_REFERENCE_BUILD          ((uint16_t)1U << 11) // LionDriver: built with LIONDRIVER_REFERENCE (TSR-514, TSR-619)
 
 // requests_rejected_pkt (LionDriver): control requests refused by the reference lock since reset (TSR-512),
 // saturating; always 0 outside the LIONDRIVER_REFERENCE build
