@@ -27,6 +27,7 @@
 #include "board/obj/gitversion.h"
 
 #include "board/can_comms.h"
+#include "board/reference_lock.h"
 #include "board/main_comms.h"
 
 // ****************************** safety mode ******************************

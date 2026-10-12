@@ -4,7 +4,6 @@ extern int _app_start[0xc000]; // Only first 3 sectors of size 0x4000 are used
 
 // Prototypes
 void set_safety_mode(uint16_t mode, uint16_t param);
-bool is_car_safety_mode(uint16_t mode);
 
 static int get_health_pkt(void *dat) {
   COMPILE_TIME_ASSERT(sizeof(struct health_t) <= USBPACKET_MAX_SIZE);
@@ -64,7 +63,15 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
   unsigned int resp_len = 0;
   uint32_t time;
 
-  switch (req->request) {
+  uint8_t request = req->request;
+#ifdef LIONDRIVER_REFERENCE
+  // a rejected request is mapped to 0x00, which has no handler and no effect
+  if (!reference_request_allowed(req)) {
+    request = 0x00U;
+  }
+#endif
+
+  switch (request) {
     // **** 0xa8: get microsecond timer
     case 0xa8:
       time = microsecond_timer_get();
