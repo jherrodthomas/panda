@@ -7,6 +7,7 @@
 #include "board/drivers/simple_watchdog.h"
 #include "board/drivers/hw_watchdog.h"
 #include "board/drivers/heartbeat_monitor.h"
+#include "board/drivers/eps_fault_siren.h"
 #include "board/drivers/irq_priorities.h"
 #ifdef LIONDRIVER_FAULT_INJECTION
 #include "board/drivers/fault_injection.h"
@@ -42,6 +43,7 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
   // set_safety_hooks only resets state and copies the configuration; it does not wait on hardware.
   ENTER_CRITICAL();
   int err = set_safety_hooks(mode_copy, param);
+  eps_fault_siren_reset();  // LionDriver TSR-516(b): no siren carried over from the previous mode
   EXIT_CRITICAL();
   if (err == -1) {
     print("Error: safety set mode failed. Falling back to SILENT\n");
@@ -125,6 +127,9 @@ static void main_loop_progress(void) {
   #endif
 }
 
+// LionDriver TSR-516(b): set by the safety task, read by the tick that drives the speaker
+static bool eps_fault_siren_active = false;
+
 // called at SAFETY_TASK_FREQ (100 Hz): periodic safety checks (LionDriver SWSR-401a) and
 // hardware watchdog feed
 static void safety_task_handler(void) {
@@ -135,6 +140,8 @@ static void safety_task_handler(void) {
     if (heartbeat_monitor_tick() && is_car_safety_mode(current_safety_mode)) {
       controls_allowed = false;
     }
+    // LionDriver TSR-516(b): siren when the EPS fault (TSR-110) persists while authority is granted
+    eps_fault_siren_active = eps_fault_siren_tick(safety_eps_fault, controls_allowed);
     hw_watchdog_tick();
     #ifdef LIONDRIVER_FAULT_INJECTION
     fault_injection_safety_task();
@@ -152,7 +159,7 @@ static void tick_handler(void) {
     static bool relay_malfunction_prev = false;
 
     // siren
-    current_board->set_siren((loop_counter & 1U) && (siren_enabled || (siren_countdown > 0U)));
+    current_board->set_siren((loop_counter & 1U) && (siren_enabled || (siren_countdown > 0U) || eps_fault_siren_active));
 
     // tick drivers at 8Hz
     fan_tick();

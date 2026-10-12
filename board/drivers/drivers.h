@@ -222,6 +222,11 @@ void interrupt_priorities_init(void);
 void heartbeat_monitor_reset(void);
 bool heartbeat_monitor_tick(void);
 
+// ******************** eps_fault_siren ********************
+// LionDriver TSR-516(b): siren on a persistent EPS fault, see board/drivers/eps_fault_siren.h
+void eps_fault_siren_reset(void);
+bool eps_fault_siren_tick(bool eps_fault, bool engaged);
+
 // ******************** spi ********************
 
 // got max rate from hitting a non-existent endpoint
