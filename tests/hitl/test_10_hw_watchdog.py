@@ -7,7 +7,8 @@ Verifies TSR-501 / HWSR-501 and the window (HWSR-501b) on the bench (LionDriver 
   - HITL=1 FAULT_INJECTION=1 in the environment
 
 For each injected hang the test measures the time from the request until the relay drive
-is released, and checks that the panda comes back up in SILENT.
+is released, checks that the panda comes back up in SILENT, and that health reports the
+reset as a watchdog reset until the next ordinary reset.
 """
 import os
 import time
@@ -88,6 +89,10 @@ class TestHardwareWatchdog(PandaTestCase):
     health = p.health()
     self.assertEqual(health["safety_mode"], CarParams.SafetyModel.silent)
     self.assertLess(health["uptime"], 5, "panda did not reset")
+    # the reset is reported as a watchdog reset, and only until the next reset
+    self.assertTrue(health["watchdog_reset"], "reset not reported as a watchdog reset")
+    p.reset()
+    self.assertFalse(p.health()["watchdog_reset"], "watchdog reset flag not cleared by the next reset")
 
   @panda_test(needs_jungle=True, timeout=30)
   def test_main_loop_hang(self):
@@ -115,4 +120,6 @@ class TestHardwareWatchdog(PandaTestCase):
     self._relay_driven_channels()
     up0 = p.health()["uptime"]
     time.sleep(3.0)
-    self.assertGreaterEqual(p.health()["uptime"], up0 + 2, "panda reset without an injected fault")
+    health = p.health()
+    self.assertGreaterEqual(health["uptime"], up0 + 2, "panda reset without an injected fault")
+    self.assertFalse(health["watchdog_reset"])
