@@ -7,6 +7,7 @@
 #include "board/drivers/simple_watchdog.h"
 #include "board/drivers/hw_watchdog.h"
 #include "board/drivers/heartbeat_monitor.h"
+#include "board/drivers/irq_priorities.h"
 #ifdef LIONDRIVER_FAULT_INJECTION
 #include "board/drivers/fault_injection.h"
 #endif
@@ -36,11 +37,18 @@
 // this is the only way to leave silent mode
 void set_safety_mode(uint16_t mode, uint16_t param) {
   uint16_t mode_copy = mode;
+  // LionDriver WP-W-03 §5.4.3 R-1: switch the safety configuration atomically, so that no interrupt (in
+  // particular a higher-priority safety task) sees rx_checks and rx_checks_len from different modes.
+  // set_safety_hooks only resets state and copies the configuration; it does not wait on hardware.
+  ENTER_CRITICAL();
   int err = set_safety_hooks(mode_copy, param);
+  EXIT_CRITICAL();
   if (err == -1) {
     print("Error: safety set mode failed. Falling back to SILENT\n");
     mode_copy = SAFETY_SILENT;
+    ENTER_CRITICAL();
     err = set_safety_hooks(mode_copy, 0U);
+    EXIT_CRITICAL();
     // TERMINAL ERROR: we can't continue if SILENT safety mode isn't succesfully set
     assert_fatal(err == 0, "Error: Failed setting SILENT mode. Hanging\n");
   }
@@ -287,6 +295,9 @@ int main(void) {
 
   // shouldn't have interrupts here, but just in case
   disable_interrupts();
+
+  // LionDriver SWSR-519: explicit priority for every interrupt, before any of them is enabled
+  interrupt_priorities_init();
 
   // init early devices
   clock_init();
