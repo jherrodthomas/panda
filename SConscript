@@ -19,6 +19,12 @@ else:
   cert_fn = File("./board/crypto/certs/debug").srcnode().relpath
   common_flags += ["-DALLOW_DEBUG"]
 
+# LionDriver reference build (TSR-512/513): locks the safety mode, parameter and alternative experience
+# to the 2020 Corolla LE TSS2 reference configuration. The reference release build is
+# RELEASE=1 LIONDRIVER_REFERENCE=1
+if os.getenv("LIONDRIVER_REFERENCE"):
+  common_flags += ["-DLIONDRIVER_REFERENCE"]
+
 def objcopy(source, target, env, for_signature):
     return '$OBJCOPY -O binary %s %s' % (source[0], target[0])
 
