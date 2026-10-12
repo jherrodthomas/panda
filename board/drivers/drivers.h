@@ -213,6 +213,10 @@ void hw_watchdog_start(void);
 void hw_watchdog_main_loop_alive(void);
 void hw_watchdog_tick(void);
 
+// ******************** irq_priorities ********************
+// LionDriver SWSR-519: see board/drivers/irq_priorities.h
+void interrupt_priorities_init(void);
+
 // ******************** heartbeat_monitor ********************
 // LionDriver TSR-407: fast heartbeat supervision, see board/drivers/heartbeat_monitor.h
 void heartbeat_monitor_reset(void);
