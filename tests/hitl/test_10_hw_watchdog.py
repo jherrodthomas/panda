@@ -1,6 +1,6 @@
 """LionDriver HIL test: the hardware watchdog resets the MCU and releases the relay.
 
-Verifies TSR-501 / HWSR-501 on the bench (LionDriver WP-V-05). Needs:
+Verifies TSR-501 / HWSR-501 and the window (HWSR-501b) on the bench (LionDriver WP-V-05). Needs:
   - a panda flashed with a fault-injection debug build: FAULT_INJECTION=1 scons
   - a panda jungle, so the harness is emulated (the relay is only driven with a harness
     connected) and the relay drive can be observed on the SBU lines
@@ -21,14 +21,19 @@ FAULT_INJECTION_REQUEST = 0xa9
 HANG_MAIN_LOOP = 1
 HANG_TICK = 2
 HANG_IRQ_DISABLED = 3
+HANG_SAFETY_TASK = 4
+EARLY_FEED = 5
 
-# Bound for request -> relay released. 175 ms nominal watchdog timeout plus LSI tolerance,
-# relay drive release and USB polling. TSR-501 requires 0.1 s (deviation D-1, accepted as
-# interim); tighten this when the watchdog is fed from the >= 50 Hz safety task.
-RESET_BUDGET_S = float(os.environ.get("WATCHDOG_RESET_BUDGET_S", "0.25"))
+# Bound for request -> relay released: TSR-501's 0.1 s plus 20 ms for relay drive release
+# and USB polling of the jungle. The 90 ms nominal timeout fits only if the LSI is at most
+# about 10 % slow (impact record OI-2). The scope measurement (HIL bench plan stage B2) is
+# the evidence for the 0.1 s itself.
+RESET_BUDGET_S = float(os.environ.get("WATCHDOG_RESET_BUDGET_S", "0.12"))
 # A tick hang starts only at the next 8 Hz tick, up to one tick period after the request;
 # that wait is not part of the detection time, so it is added to the budget for that mode.
 TICK_PERIOD_S = 0.125
+# likewise a safety-task hang starts at the next 100 Hz task run
+SAFETY_TASK_PERIOD_S = 0.010
 # smallest SBU voltage change counted as a change of relay drive
 SBU_DELTA_V = float(os.environ.get("WATCHDOG_SBU_DELTA_V", "0.3"))
 POLL_TIMEOUT_S = 2.0
@@ -95,6 +100,14 @@ class TestHardwareWatchdog(PandaTestCase):
   @panda_test(needs_jungle=True, timeout=30)
   def test_hang_with_interrupts_disabled(self):
     self._inject_and_time_release(HANG_IRQ_DISABLED)
+
+  @panda_test(needs_jungle=True, timeout=30)
+  def test_safety_task_hang(self):
+    self._inject_and_time_release(HANG_SAFETY_TASK, start_delay_s=SAFETY_TASK_PERIOD_S)
+
+  @panda_test(needs_jungle=True, timeout=30)
+  def test_early_feed_window_violation(self):
+    self._inject_and_time_release(EARLY_FEED, start_delay_s=SAFETY_TASK_PERIOD_S)
 
   @panda_test(needs_jungle=True, timeout=30)
   def test_no_reset_without_fault(self):

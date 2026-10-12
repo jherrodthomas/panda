@@ -115,6 +115,20 @@ static void main_loop_progress(void) {
   #endif
 }
 
+// called at SAFETY_TASK_FREQ (100 Hz): periodic safety checks (LionDriver SWSR-401a) and
+// hardware watchdog feed
+static void safety_task_handler(void) {
+  if (SAFETY_TASK_TIMER->SR != 0U) {
+    // RX timeout and validity checks of the safety mode
+    safety_tick();
+    hw_watchdog_tick();
+    #ifdef LIONDRIVER_FAULT_INJECTION
+    fault_injection_safety_task();
+    #endif
+  }
+  SAFETY_TASK_TIMER->SR = 0;
+}
+
 // called at 8Hz
 static void tick_handler(void) {
   if (TICK_TIMER->SR != 0U) {
@@ -130,7 +144,6 @@ static void tick_handler(void) {
     fan_tick();
     harness_tick();
     simple_watchdog_kick();
-    hw_watchdog_tick();
     #ifdef LIONDRIVER_FAULT_INJECTION
     fault_injection_tick();
     #endif
@@ -254,9 +267,6 @@ static void tick_handler(void) {
       uptime_cnt += 1U;
       safety_mode_cnt += 1U;
       ignition_can_cnt += 1U;
-
-      // synchronous safety check
-      safety_tick();
     }
 
     loop_counter++;
@@ -320,6 +330,10 @@ int main(void) {
   // 8Hz timer
   REGISTER_INTERRUPT(TICK_TIMER_IRQ, tick_handler, 10U, FAULT_INTERRUPT_RATE_TICK)
   tick_timer_init();
+
+  // 100 Hz safety task; shares the tick's rate fault (fault bits mirror the cereal FaultType enum)
+  REGISTER_INTERRUPT(SAFETY_TASK_TIMER_IRQ, safety_task_handler, (SAFETY_TASK_FREQ + 10U), FAULT_INTERRUPT_RATE_TICK)
+  safety_task_timer_init();
 
   // enable USB (right before interrupts or enum can fail!)
   usb_init();

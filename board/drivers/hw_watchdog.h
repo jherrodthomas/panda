@@ -13,32 +13,34 @@
 //
 // It is started by set_intercept_relay() the first time the relay is driven, by any path
 // (a relay-driving safety mode or the 0xc5 debug command), because only then can a hang
-// leave the relay energised (GAP-43). It is fed from the 8 Hz
-// tick, and only when the main loop has run since the previous tick, so a stall of the
-// tick interrupt or of the main loop both end in a reset.
+// leave the relay energised (GAP-43). It is fed from the 100 Hz safety task, and only
+// when the main loop has run since the previous feed, so a stall of the safety task
+// interrupt or of the main loop both end in a reset.
 //
-// Timeout = 4 * 2^PR * (RLR + 1) / f_LSI. With PR = 0 (/4) and RLR = 1399 the nominal
-// timeout is 175 ms at f_LSI = 32 kHz. It must exceed the 125 ms feed period (8 Hz tick)
-// with margin for LSI tolerance, which must be confirmed from the STM32H725 datasheet.
+// Timeout = 4 * 2^PR * (RLR + 1) / f_LSI. With PR = 0 (/4) and RLR = 719 the nominal
+// timeout is 90 ms at f_LSI = 32 kHz, within the 0.1 s of LionDriver TSR-501 (SG-07
+// forwarding budget). It must exceed the 10 ms feed period (100 Hz safety task) with
+// margin for LSI tolerance, which must be confirmed from the STM32H725 datasheet.
 //
-// Known deviations from LionDriver TSR-501 (v0.3), recorded for review:
-//  - TSR-501 requires a reset within 0.1 s of a stall (SG-07 forwarding budget). 175 ms
-//    meets the SG-01 budget (0.5 s) only. Reaching 0.1 s needs a feed source faster than
-//    the 8 Hz tick, i.e. the >= 50 Hz periodic safety task of TSR-401/TSR-519.
-//  - The watchdog runs in normal (not window) mode; HWSR-501b asks for window mode.
-//  - Start on first relay drive instead of before the application (TSR-501 v0.3) was
-//    accepted on 2026-10-12; TSR-501 is being amended to match.
+// Window mode (LionDriver HWSR-501b): a feed is only accepted once the counter has
+// dropped to WINR or below, i.e. (RLR - WINR) * 4 * 2^PR / f_LSI after the previous feed
+// (5 ms nominal with WINR = 679). An earlier feed resets the MCU, so a safety task that
+// runs too fast (timer misconfigured, interrupt storm) is also caught. The first tick
+// after the start is skipped, because the start is not aligned to the safety task and
+// that tick may come less than 5 ms later.
 
 #define HW_WATCHDOG_KEY_START 0xCCCCU
 #define HW_WATCHDOG_KEY_UNLOCK 0x5555U
 #define HW_WATCHDOG_KEY_FEED 0xAAAAU
 #define HW_WATCHDOG_PRESCALER 0U
-#define HW_WATCHDOG_RELOAD 1399U
-// bounded wait for the prescaler/reload update (takes up to 5 LSI cycles, about 160 us)
+#define HW_WATCHDOG_RELOAD 719U
+#define HW_WATCHDOG_WINDOW 679U
+// bounded wait for the prescaler/reload/window update (takes up to 5 LSI cycles, about 160 us)
 #define HW_WATCHDOG_UPDATE_WAIT 200000U
 
 static bool hw_watchdog_running = false;
 static volatile bool hw_watchdog_main_loop_ran = false;
+static bool hw_watchdog_skip_tick = false;
 
 void hw_watchdog_start(void) {
   if (!hw_watchdog_running) {
@@ -47,7 +49,10 @@ void hw_watchdog_start(void) {
     IND_WDG->PR = HW_WATCHDOG_PRESCALER;
     IND_WDG->RLR = HW_WATCHDOG_RELOAD;
     for (uint32_t i = 0U; (i < HW_WATCHDOG_UPDATE_WAIT) && ((IND_WDG->SR & (IWDG_SR_PVU | IWDG_SR_RVU)) != 0U); i++) {}
-    IND_WDG->KR = HW_WATCHDOG_KEY_FEED;
+    // writing the window enables window mode and reloads the counter
+    IND_WDG->WINR = HW_WATCHDOG_WINDOW;
+    for (uint32_t i = 0U; (i < HW_WATCHDOG_UPDATE_WAIT) && ((IND_WDG->SR & IWDG_SR_WVU) != 0U); i++) {}
+    hw_watchdog_skip_tick = true;
     hw_watchdog_running = true;
   }
 }
@@ -57,10 +62,15 @@ void hw_watchdog_main_loop_alive(void) {
   hw_watchdog_main_loop_ran = true;
 }
 
-// called from the 8 Hz tick
+// called from the 100 Hz safety task
 void hw_watchdog_tick(void) {
-  if (hw_watchdog_running && hw_watchdog_main_loop_ran) {
+  if (hw_watchdog_skip_tick) {
+    // first tick after the start may fall inside the window's closed part
+    hw_watchdog_skip_tick = false;
+  } else if (hw_watchdog_running && hw_watchdog_main_loop_ran) {
     hw_watchdog_main_loop_ran = false;
     IND_WDG->KR = HW_WATCHDOG_KEY_FEED;
+  } else {
+    // not started, or the main loop has not run since the previous feed: no feed
   }
 }

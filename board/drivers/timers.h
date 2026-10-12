@@ -27,6 +27,16 @@ void interrupt_timer_init(void) {
   NVIC_EnableIRQ(INTERRUPT_TIMER_IRQ);
 }
 
+void safety_task_timer_init(void) {
+  // APB1 timer clock / APB1_TIMER_FREQ = 1 MHz count; period 1e6 / SAFETY_TASK_FREQ = 10 ms
+  register_set(&(SAFETY_TASK_TIMER->PSC), (APB1_TIMER_FREQ - 1U), 0xFFFFU);
+  register_set(&(SAFETY_TASK_TIMER->ARR), ((1000000U / SAFETY_TASK_FREQ) - 1U), 0xFFFFU);
+  register_set(&(SAFETY_TASK_TIMER->DIER), TIM_DIER_UIE, 0x5F5FU);
+  register_set(&(SAFETY_TASK_TIMER->CR1), TIM_CR1_CEN, 0x3FU);
+  SAFETY_TASK_TIMER->SR = 0;
+  NVIC_EnableIRQ(SAFETY_TASK_TIMER_IRQ);
+}
+
 void tick_timer_init(void) {
   timer_init(TICK_TIMER, (uint16_t)((15.25*APB2_TIMER_FREQ)/8U));
   NVIC_EnableIRQ(TICK_TIMER_IRQ);
