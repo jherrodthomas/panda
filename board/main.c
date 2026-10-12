@@ -356,6 +356,15 @@ int main(void) {
   }
   fault_cookie = 0U;
 
+  // LionDriver: report a reset by the independent watchdog (hw_watchdog.h), then clear the
+  // reset flags so the next reset reports its own cause. The RSR flags survive every reset
+  // except power-on until RMVF is written. Written directly, not with register_set_bits(),
+  // because the hardware clears RMVF again and the register check would see a divergence.
+  if ((RCC->RSR & RCC_RSR_IWDG1RSTF) != 0U) {
+    reset_flags |= HEALTH_FLAG_WATCHDOG_RESET;
+  }
+  RCC->RSR = RCC_RSR_RMVF;
+
   print("**** INTERRUPTS ON ****\n");
   enable_interrupts();
 
