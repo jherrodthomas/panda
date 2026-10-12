@@ -47,11 +47,9 @@ uint32_t reload(void) { return HW_WATCHDOG_RELOAD; }
 """
 
 FEED_KEY = 0xAAAA
-TICK_PERIOD_S = 1.0 / 8.0
-# TSR-501 v0.3 requires 0.1 s (SG-07 forwarding) and notes that 0.2 s would meet SG-01 only.
-# This test checks the 0.2 s SG-01 bound; the 0.1 s requirement is not met yet and is
-# recorded as a deviation (see hw_watchdog.h).
-SG01_DETECTION_BUDGET_S = 0.200
+FEED_PERIOD_S = 1.0 / 100.0  # fed from the 100 Hz safety task
+# TSR-501 requires a reset within 0.1 s of a stall (SG-07 forwarding FDTI, WP-S-04 §3.6).
+TSR501_DETECTION_BUDGET_S = 0.100
 LSI_HZ = 32000.0
 
 
@@ -118,10 +116,10 @@ class TestHwWatchdog(unittest.TestCase):
     self.lib.start()  # must return although PVU/RVU never clear
     self.assertTrue(self.lib.running())
 
-  def test_timeout_fits_feed_period_and_sg01_budget(self):
+  def test_timeout_fits_feed_period_and_tsr501_budget(self):
     timeout_s = 4 * (2 ** self.lib.prescaler()) * (self.lib.reload() + 1) / LSI_HZ
-    self.assertGreater(timeout_s, TICK_PERIOD_S, "timeout shorter than the feed period")
-    self.assertLess(timeout_s, SG01_DETECTION_BUDGET_S, "timeout longer than the SG-01 detection budget")
+    self.assertGreater(timeout_s, 5 * FEED_PERIOD_S, "timeout too close to the feed period")
+    self.assertLess(timeout_s, TSR501_DETECTION_BUDGET_S, "timeout longer than the TSR-501 detection budget")
 
 
 if __name__ == "__main__":

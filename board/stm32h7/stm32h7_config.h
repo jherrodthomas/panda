@@ -35,6 +35,11 @@ separate IRQs for RX and TX.
 #define TICK_TIMER_IRQ TIM8_BRK_TIM12_IRQn
 #define TICK_TIMER TIM12
 
+// 100 Hz periodic safety task (LionDriver SWSR-401a): RX timeout checks and hardware watchdog feed
+#define SAFETY_TASK_TIMER_IRQ TIM4_IRQn
+#define SAFETY_TASK_TIMER TIM4
+#define SAFETY_TASK_FREQ 100U
+
 #define MICROSECOND_TIMER TIM2
 
 #define INTERRUPT_TIMER_IRQ TIM6_DAC_IRQn
