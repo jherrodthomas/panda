@@ -55,6 +55,13 @@ void set_power_save_state(bool enable) {
 }
 
 static void enter_stop_mode(void) {
+  // The IWDG cannot be stopped and keeps counting in stop mode, so it would reset the MCU
+  // shortly after it fell asleep. Reset now instead: the IWDG starts stopped after a reset
+  // and is only restarted by a relay-driving safety mode, so the next stop entry sleeps.
+  if (hw_watchdog_running) {
+    NVIC_SystemReset();
+  }
+
   // set all GPIO to analog mode to reduce power, analog mode also disables pull resistors
   register_set(&(GPIOA->MODER), 0xFFFFFFFFU, 0xFFFFFFFFU);
   register_set(&(GPIOB->MODER), 0xFFFFFFFFU, 0xFFFFFFFFU);

@@ -5,6 +5,7 @@
 #include "board/drivers/pwm.h"
 #include "board/drivers/usb.h"
 #include "board/drivers/simple_watchdog.h"
+#include "board/drivers/hw_watchdog.h"
 #include "board/drivers/bootkick.h"
 
 #include "board/early_init.h"
@@ -69,6 +70,8 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
       break;
     default:
       set_intercept_relay(true, false);
+      // the relay can now be held energised: from here on, a hang must end in a reset
+      hw_watchdog_start();
       heartbeat_counter = 0U;
       heartbeat_lost = false;
       current_board->set_can_mode(CAN_MODE_NORMAL);
@@ -117,6 +120,7 @@ static void tick_handler(void) {
     fan_tick();
     harness_tick();
     simple_watchdog_kick();
+    hw_watchdog_tick();
     sound_tick();
 
     if (relay_malfunction_prev != relay_malfunction) {
@@ -329,6 +333,7 @@ int main(void) {
 
   // LED should keep on blinking all the time
   while (true) {
+    hw_watchdog_main_loop_alive();
     #ifdef ALLOW_DEBUG
     if (stop_mode_requested) {
       enter_stop_mode();
@@ -337,6 +342,7 @@ int main(void) {
     if (!power_save_enabled) {
       // useful for debugging, fade breaks = panda is overloaded
       for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += 1U) {
+        hw_watchdog_main_loop_alive();
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
@@ -344,6 +350,7 @@ int main(void) {
       }
 
       for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= 1U) {
+        hw_watchdog_main_loop_alive();
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
