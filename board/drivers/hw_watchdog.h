@@ -15,9 +15,16 @@
 // tick interrupt or of the main loop both end in a reset.
 //
 // Timeout = 4 * 2^PR * (RLR + 1) / f_LSI. With PR = 0 (/4) and RLR = 1399 the nominal
-// timeout is 175 ms at f_LSI = 32 kHz: above the 125 ms feed period with margin for LSI
-// tolerance, and below the 200 ms detection budget for safety-MCU execution faults
-// (WP-C-04 §8). The LSI tolerance range must be confirmed from the STM32H725 datasheet.
+// timeout is 175 ms at f_LSI = 32 kHz. It must exceed the 125 ms feed period (8 Hz tick)
+// with margin for LSI tolerance, which must be confirmed from the STM32H725 datasheet.
+//
+// Known deviations from LionDriver TSR-501 (v0.3), recorded for review:
+//  - TSR-501 requires a reset within 0.1 s of a stall (SG-07 forwarding budget). 175 ms
+//    meets the SG-01 budget (0.5 s) only. Reaching 0.1 s needs a feed source faster than
+//    the 8 Hz tick, i.e. the >= 50 Hz periodic safety task of TSR-401/TSR-519.
+//  - TSR-501 requires the watchdog to start before the application runs. Here it starts
+//    when the relay is first driven: in SILENT the relay is never energised, so a hang
+//    there is already safe, and an idle device keeps its power-save and stop modes.
 
 #define HW_WATCHDOG_KEY_START 0xCCCCU
 #define HW_WATCHDOG_KEY_UNLOCK 0x5555U

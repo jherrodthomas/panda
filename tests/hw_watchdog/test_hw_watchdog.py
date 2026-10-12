@@ -48,7 +48,9 @@ uint32_t reload(void) { return HW_WATCHDOG_RELOAD; }
 
 FEED_KEY = 0xAAAA
 TICK_PERIOD_S = 1.0 / 8.0
-DETECTION_BUDGET_S = 0.200  # WP-C-04 §8, safety-MCU execution faults
+# SG-01 allocation for safety-MCU execution faults (WP-C-04 §8). TSR-501 v0.3 asks for 0.1 s
+# (SG-07); that is not met yet and is recorded as a deviation (see hw_watchdog.h).
+SG01_DETECTION_BUDGET_S = 0.200
 LSI_HZ = 32000.0
 
 
@@ -115,10 +117,10 @@ class TestHwWatchdog(unittest.TestCase):
     self.lib.start()  # must return although PVU/RVU never clear
     self.assertTrue(self.lib.running())
 
-  def test_timeout_fits_feed_period_and_budget(self):
+  def test_timeout_fits_feed_period_and_sg01_budget(self):
     timeout_s = 4 * (2 ** self.lib.prescaler()) * (self.lib.reload() + 1) / LSI_HZ
     self.assertGreater(timeout_s, TICK_PERIOD_S, "timeout shorter than the feed period")
-    self.assertLess(timeout_s, DETECTION_BUDGET_S, "timeout longer than the detection budget")
+    self.assertLess(timeout_s, SG01_DETECTION_BUDGET_S, "timeout longer than the SG-01 detection budget")
 
 
 if __name__ == "__main__":
