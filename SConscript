@@ -25,6 +25,11 @@ else:
 if os.getenv("LIONDRIVER_REFERENCE"):
   common_flags += ["-DLIONDRIVER_REFERENCE"]
 
+# LionDriver: fault-injection hooks for the HIL bench, debug builds only
+if os.getenv("FAULT_INJECTION"):
+  assert BUILD_TYPE == "DEBUG", "FAULT_INJECTION is only allowed in debug builds"
+  common_flags += ["-DLIONDRIVER_FAULT_INJECTION"]
+
 def objcopy(source, target, env, for_signature):
     return '$OBJCOPY -O binary %s %s' % (source[0], target[0])
 
