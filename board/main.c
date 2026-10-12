@@ -6,6 +6,9 @@
 #include "board/drivers/usb.h"
 #include "board/drivers/simple_watchdog.h"
 #include "board/drivers/hw_watchdog.h"
+#ifdef LIONDRIVER_FAULT_INJECTION
+#include "board/drivers/fault_injection.h"
+#endif
 #include "board/drivers/bootkick.h"
 
 #include "board/early_init.h"
@@ -103,6 +106,15 @@ static void __attribute__ ((noinline)) enable_fpu(void) {
 #define HEARTBEAT_IGNITION_CNT_ON 5U
 #define HEARTBEAT_IGNITION_CNT_OFF 2U
 
+// marks main-loop progress for the hardware watchdog; called often enough that an injected
+// hang starts within microseconds of the request, not at the end of an LED fade cycle
+static void main_loop_progress(void) {
+  hw_watchdog_main_loop_alive();
+  #ifdef LIONDRIVER_FAULT_INJECTION
+  fault_injection_main_loop();
+  #endif
+}
+
 // called at SAFETY_TASK_FREQ (100 Hz): periodic safety checks (LionDriver SWSR-401a) and
 // hardware watchdog feed
 static void safety_task_handler(void) {
@@ -110,6 +122,9 @@ static void safety_task_handler(void) {
     // RX timeout and validity checks of the safety mode
     safety_tick();
     hw_watchdog_tick();
+    #ifdef LIONDRIVER_FAULT_INJECTION
+    fault_injection_safety_task();
+    #endif
   }
   SAFETY_TASK_TIMER->SR = 0;
 }
@@ -129,6 +144,9 @@ static void tick_handler(void) {
     fan_tick();
     harness_tick();
     simple_watchdog_kick();
+    #ifdef LIONDRIVER_FAULT_INJECTION
+    fault_injection_tick();
+    #endif
     sound_tick();
 
     if (relay_malfunction_prev != relay_malfunction) {
@@ -342,7 +360,7 @@ int main(void) {
 
   // LED should keep on blinking all the time
   while (true) {
-    hw_watchdog_main_loop_alive();
+    main_loop_progress();
     #ifdef ALLOW_DEBUG
     if (stop_mode_requested) {
       enter_stop_mode();
@@ -351,7 +369,7 @@ int main(void) {
     if (!power_save_enabled) {
       // useful for debugging, fade breaks = panda is overloaded
       for (uint32_t fade = 0U; fade < MAX_LED_FADE; fade += 1U) {
-        hw_watchdog_main_loop_alive();
+        main_loop_progress();
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
@@ -359,7 +377,7 @@ int main(void) {
       }
 
       for (uint32_t fade = MAX_LED_FADE; fade > 0U; fade -= 1U) {
-        hw_watchdog_main_loop_alive();
+        main_loop_progress();
         led_set(LED_RED, true);
         delay(fade >> 4);
         led_set(LED_RED, false);
