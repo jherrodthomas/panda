@@ -9,7 +9,10 @@
 #define HEALTH_FLAG_SOM_RESET_TRIGGERED      (1U << 6)
 #define HEALTH_FLAG_NMI_RESET                (1U << 7)
 #define HEALTH_FLAG_HARDFAULT_RESET          ((uint16_t)1U << 8)
+#define HEALTH_FLAG_WATCHDOG_RESET           ((uint16_t)1U << 9)  // LionDriver: last reset by the IWDG (TSR-501)
 
+// requests_rejected_pkt (LionDriver): control requests refused by the reference lock since reset (TSR-512),
+// saturating; always 0 outside the LIONDRIVER_REFERENCE build
 struct __attribute__((packed)) health_t {
   uint32_t uptime_pkt;
   uint16_t voltage_pkt;
@@ -32,6 +35,7 @@ struct __attribute__((packed)) health_t {
   uint16_t sbu2_voltage_mV;
   uint16_t sound_output_level_pkt;
   uint8_t temperature_pkt;
+  uint16_t requests_rejected_pkt;
 };
 
 typedef struct __attribute__((packed)) {

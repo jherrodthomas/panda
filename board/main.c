@@ -356,6 +356,13 @@ int main(void) {
   }
   fault_cookie = 0U;
 
+  // LionDriver: report a reset by the independent hardware watchdog (TSR-501), then clear the reset cause
+  // flags, which otherwise persist, so that the next reset reports its own cause only
+  if ((RCC->RSR & RCC_RSR_IWDG1RSTF) != 0U) {
+    reset_flags |= HEALTH_FLAG_WATCHDOG_RESET;
+  }
+  RCC->RSR |= RCC_RSR_RMVF;
+
   print("**** INTERRUPTS ON ****\n");
   enable_interrupts();
 
