@@ -48,8 +48,9 @@ uint32_t reload(void) { return HW_WATCHDOG_RELOAD; }
 
 FEED_KEY = 0xAAAA
 TICK_PERIOD_S = 1.0 / 8.0
-# SG-01 allocation for safety-MCU execution faults (WP-C-04 §8). TSR-501 v0.3 asks for 0.1 s
-# (SG-07); that is not met yet and is recorded as a deviation (see hw_watchdog.h).
+# TSR-501 v0.3 requires 0.1 s (SG-07 forwarding) and notes that 0.2 s would meet SG-01 only.
+# This test checks the 0.2 s SG-01 bound; the 0.1 s requirement is not met yet and is
+# recorded as a deviation (see hw_watchdog.h).
 SG01_DETECTION_BUDGET_S = 0.200
 LSI_HZ = 32000.0
 
