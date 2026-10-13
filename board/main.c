@@ -212,6 +212,7 @@ static void tick_handler(void) {
       // tick drivers at 1Hz
       bool started = harness_check_ignition() || ignition_can;
       bootkick_tick(started, recent_heartbeat);
+      reference_lock_ignition_update(started);
 
       // increase heartbeat counter and cap it at the uint32 limit
       if (heartbeat_counter < UINT32_MAX) {

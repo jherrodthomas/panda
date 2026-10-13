@@ -41,6 +41,7 @@ void set_mode(uint16_t mode) { current_safety_mode = mode; }
 uint16_t rejected(void) { return reference_requests_rejected; }
 void set_rejected(uint16_t n) { reference_requests_rejected = n; }
 uint16_t build_flags(void) { return reference_build_health_flags(); }
+void ignition(bool on) { reference_lock_ignition_update(on); }
 """
 
 # A build without LIONDRIVER_REFERENCE has no gate; only the build flag can be checked.
@@ -78,6 +79,7 @@ def build(tmp, name, defines, harness=HARNESS):
   so.set_mode.argtypes = [ctypes.c_uint16]
   so.rejected.restype = ctypes.c_uint16
   so.set_rejected.argtypes = [ctypes.c_uint16]
+  so.ignition.argtypes = [ctypes.c_bool]
   return so
 
 
@@ -91,6 +93,10 @@ class TestReferenceLock(unittest.TestCase):
   @classmethod
   def tearDownClass(cls):
     cls.tmp.cleanup()
+
+  def setUp(self):
+    # each test starts after an ignition-off tick, with no car mode in the current ignition cycle
+    self.ref.ignition(False)
 
   def test_safety_mode_requests_outside_toyota(self):
     for current in (SILENT, NOOUTPUT, ELM327):
@@ -163,6 +169,63 @@ class TestReferenceLock(unittest.TestCase):
     bits = [int(b) for _, b in flags]
     self.assertIn(("HEALTH_FLAG_REFERENCE_BUILD", "12"), flags)
     self.assertEqual(len(bits), len(set(bits)), f"health flag bits must be unique: {flags}")
+
+  def test_elm327_for_fingerprinting_before_the_car_mode(self):
+    # pandad's onroad sequence: ELM327 (both OBD multiplexing params), then the car mode
+    self.ref.ignition(True)
+    self.ref.set_mode(SILENT)
+    for param in (1, 0, 1):
+      self.assertTrue(self.ref.allowed(0xdc, ELM327, param))
+    self.ref.set_mode(ELM327)
+    self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+
+  def test_elm327_refused_after_the_car_mode_while_ignition_on(self):
+    # DR-05 / DFI-08: a faulty host cannot downgrade and then send diagnostic traffic while driving
+    self.ref.ignition(True)
+    self.ref.set_mode(ELM327)
+    self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+    self.ref.set_mode(TOYOTA)
+    self.assertTrue(self.ref.allowed(0xdc, NOOUTPUT, 0))
+    for mode in (NOOUTPUT, SILENT):
+      self.ref.set_mode(mode)
+      for param in (0, 1):
+        self.assertFalse(self.ref.allowed(0xdc, ELM327, param), (mode, param))
+      # the downgrade modes and re-arming the reference car mode stay available
+      self.assertTrue(self.ref.allowed(0xdc, NOOUTPUT, 0))
+      self.assertTrue(self.ref.allowed(0xdc, SILENT, 0))
+      self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+    # a 1 Hz tick with the ignition still on keeps the lock
+    self.ref.ignition(True)
+    self.ref.set_mode(NOOUTPUT)
+    self.assertFalse(self.ref.allowed(0xdc, ELM327, 1))
+
+  def test_elm327_allowed_again_after_ignition_off(self):
+    self.ref.ignition(True)
+    self.ref.set_mode(ELM327)
+    self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+    self.ref.set_mode(NOOUTPUT)
+    self.assertFalse(self.ref.allowed(0xdc, ELM327, 1))
+    self.ref.ignition(False)
+    self.assertTrue(self.ref.allowed(0xdc, ELM327, 1))
+    # next ignition cycle: fingerprinting works again
+    self.ref.ignition(True)
+    self.assertTrue(self.ref.allowed(0xdc, ELM327, 1))
+
+  def test_elm327_allowed_with_ignition_off_after_a_car_mode(self):
+    # bench use: a car mode set while the ignition is off does not block diagnostics until the ignition comes on
+    self.ref.set_mode(SILENT)
+    self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+    self.ref.set_mode(NOOUTPUT)
+    self.assertTrue(self.ref.allowed(0xdc, ELM327, 1))
+
+  def test_refused_elm327_counted(self):
+    self.ref.set_rejected(0)
+    self.ref.ignition(True)
+    self.ref.set_mode(SILENT)
+    self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+    self.ref.set_mode(NOOUTPUT)
+    self.assertFalse(self.ref.allowed(0xdc, ELM327, 1))
+    self.assertEqual(self.ref.rejected(), 1)
 
   def test_pandad_onroad_requests_allowed(self):
     self.ref.set_mode(TOYOTA)
