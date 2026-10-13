@@ -7,6 +7,7 @@ they do not show the effect of a request on the board (HIL).
 """
 import ctypes
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ HARNESS = r"""
 #include <stdint.h>
 
 #include "board/comms_definitions.h"
+#include "board/health.h"
 #include "opendbc/safety/can.h"
 #include "opendbc/safety/declarations.h"
 
@@ -38,6 +40,18 @@ bool allowed(uint8_t request, uint16_t param1, uint16_t param2) {
 void set_mode(uint16_t mode) { current_safety_mode = mode; }
 uint16_t rejected(void) { return reference_requests_rejected; }
 void set_rejected(uint16_t n) { reference_requests_rejected = n; }
+uint16_t build_flags(void) { return reference_build_health_flags(); }
+"""
+
+# A build without LIONDRIVER_REFERENCE has no gate; only the build flag can be checked.
+PLAIN_HARNESS = r"""
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "board/health.h"
+#include "board/reference_lock.h"
+
+uint16_t build_flags(void) { return reference_build_health_flags(); }
 """
 
 SILENT, HONDA, TOYOTA, ELM327, ALLOUTPUT, NOOUTPUT = 0, 1, 2, 3, 17, 19
@@ -48,14 +62,17 @@ CAR_MODE_LOCKED = (0xc5, 0xd8, 0xdb, 0xde, 0xe5, 0xe6, 0xe7, 0xe8, 0xf1, 0xf9, 0
 ALWAYS_ALLOWED = (0xa8, 0xc0, 0xc1, 0xd2, 0xd6, 0xdd, 0xf3, 0xb1, 0xb2)
 
 
-def build(tmp, name, defines):
+def build(tmp, name, defines, harness=HARNESS):
   src = os.path.join(tmp, f"{name}.c")
   lib = os.path.join(tmp, f"lib{name}.so")
   with open(src, "w") as f:
-    f.write(HARNESS)
+    f.write(harness)
   subprocess.check_call(["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", *defines,
                          "-I", PANDA_DIR, "-I", OPENDBC_DIR, "-o", lib, src])
   so = ctypes.CDLL(lib)
+  so.build_flags.restype = ctypes.c_uint16
+  if harness is not HARNESS:
+    return so
   so.allowed.restype = ctypes.c_bool
   so.allowed.argtypes = [ctypes.c_uint8, ctypes.c_uint16, ctypes.c_uint16]
   so.set_mode.argtypes = [ctypes.c_uint16]
@@ -69,6 +86,7 @@ class TestReferenceLock(unittest.TestCase):
   def setUpClass(cls):
     cls.tmp = tempfile.TemporaryDirectory()
     cls.ref = build(cls.tmp.name, "reference", ["-DLIONDRIVER_REFERENCE"])
+    cls.plain = build(cls.tmp.name, "plain", [], PLAIN_HARNESS)
 
   @classmethod
   def tearDownClass(cls):
@@ -127,6 +145,24 @@ class TestReferenceLock(unittest.TestCase):
     self.ref.set_rejected(0xFFFF)
     self.assertFalse(self.ref.allowed(0xdf, 1, 0))
     self.assertEqual(self.ref.rejected(), 0xFFFF)
+
+  def test_reference_build_reported_in_health_flags(self):
+    # the host refuses a car safety mode without this flag (TSR-619); it must be set in the reference build only
+    reference_build_flag = 1 << 12
+    self.assertEqual(self.ref.build_flags(), reference_build_flag)
+    self.assertEqual(self.plain.build_flags(), 0)
+
+  def test_reference_build_flag_matches_python_library(self):
+    # read the sources rather than import the library (it needs USB and opendbc)
+    with open(os.path.join(PANDA_DIR, "python", "__init__.py")) as f:
+      lib = f.read()
+    self.assertRegex(lib, r"HEALTH_FLAG_REFERENCE_BUILD = 1 << 12\n")
+    self.assertIn('"reference_build": bool(flags & self.HEALTH_FLAG_REFERENCE_BUILD)', lib)
+    with open(os.path.join(PANDA_DIR, "board", "health.h")) as f:
+      flags = re.findall(r"#define (HEALTH_FLAG_\w+)\s+\(\(?(?:uint16_t\))?1U << (\d+)\)", f.read())
+    bits = [int(b) for _, b in flags]
+    self.assertIn(("HEALTH_FLAG_REFERENCE_BUILD", "12"), flags)
+    self.assertEqual(len(bits), len(set(bits)), f"health flag bits must be unique: {flags}")
 
   def test_pandad_onroad_requests_allowed(self):
     self.ref.set_mode(TOYOTA)
