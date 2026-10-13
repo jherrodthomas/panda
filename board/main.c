@@ -8,6 +8,7 @@
 #include "board/drivers/hw_watchdog.h"
 #include "board/drivers/heartbeat_monitor.h"
 #include "board/drivers/eps_fault_siren.h"
+#include "board/drivers/heartbeat_siren.h"
 #include "board/drivers/irq_priorities.h"
 #ifdef LIONDRIVER_FAULT_INJECTION
 #include "board/drivers/fault_injection.h"
@@ -44,6 +45,7 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
   ENTER_CRITICAL();
   int err = set_safety_hooks(mode_copy, param);
   eps_fault_siren_reset();  // LionDriver TSR-516(b): no siren carried over from the previous mode
+  heartbeat_siren_reset();
   EXIT_CRITICAL();
   if (err == -1) {
     print("Error: safety set mode failed. Falling back to SILENT\n");
@@ -129,6 +131,7 @@ static void main_loop_progress(void) {
 
 // LionDriver TSR-516(b): set by the safety task, read by the tick that drives the speaker
 static bool eps_fault_siren_active = false;
+static bool heartbeat_siren_active = false;
 
 // called at SAFETY_TASK_FREQ (100 Hz): periodic safety checks (LionDriver SWSR-401a) and
 // hardware watchdog feed
@@ -137,7 +140,10 @@ static void safety_task_handler(void) {
     // RX timeout and validity checks of the safety mode
     safety_tick();
     // LionDriver TSR-407: no SoC heartbeat for > 0.3 s in a car mode revokes all authority
-    if (heartbeat_monitor_tick() && is_car_safety_mode(current_safety_mode)) {
+    const bool heartbeat_revoke = heartbeat_monitor_tick() && is_car_safety_mode(current_safety_mode);
+    // LionDriver TSR-516(b): siren at once when this revokes granted authority (evaluated before the revocation)
+    heartbeat_siren_active = heartbeat_siren_tick(heartbeat_revoke, controls_allowed);
+    if (heartbeat_revoke) {
       controls_allowed = false;
     }
     // LionDriver TSR-516(b): siren when the EPS fault (TSR-110) persists while authority is granted
@@ -159,7 +165,7 @@ static void tick_handler(void) {
     static bool relay_malfunction_prev = false;
 
     // siren
-    current_board->set_siren((loop_counter & 1U) && (siren_enabled || (siren_countdown > 0U) || eps_fault_siren_active));
+    current_board->set_siren((loop_counter & 1U) && (siren_enabled || (siren_countdown > 0U) || eps_fault_siren_active || heartbeat_siren_active));
 
     // tick drivers at 8Hz
     fan_tick();
