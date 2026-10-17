@@ -25,7 +25,7 @@ uint32_t hold_ticks(void) { return EPS_FAULT_SIREN_HOLD_TICKS; }
 """
 
 SAFETY_TASK_PERIOD_S = 0.010
-PERSIST_S = 1.0  # decision 2026-10-12: siren only for faults that persist 1 s
+PERSIST_S = 0.7  # LionDriver DQ-048 (2026-10-14): siren only for faults that persist 0.7 s (was 1 s)
 HOLD_S = 3.0     # as the siren on heartbeat loss
 
 
@@ -62,11 +62,11 @@ class TestEpsFaultSiren(unittest.TestCase):
   def test_siren_after_persistent_fault(self):
     n = self.lib.persist_ticks()
     results = self._run(n + 10, True, True)
-    self.assertFalse(any(results[:n - 1]), "siren before the fault persisted 1 s")
-    self.assertTrue(all(results[n - 1:]), "no siren after 1 s, or siren not held while the fault persists")
+    self.assertFalse(any(results[:n - 1]), "siren before the fault persisted 0.7 s")
+    self.assertTrue(all(results[n - 1:]), "no siren after 0.7 s, or siren not held while the fault persists")
 
   def test_no_siren_for_short_faults(self):
-    # repeated faults shorter than 1 s (message drop-outs) never sound the siren
+    # repeated faults shorter than 0.7 s (message drop-outs) never sound the siren
     for _ in range(20):
       self.assertFalse(any(self._run(self.lib.persist_ticks() - 1, True, True)))
       self.assertFalse(any(self._run(5, False, True)))
@@ -88,14 +88,14 @@ class TestEpsFaultSiren(unittest.TestCase):
     self.assertTrue(all(self._run(hold - 1, True, False)))
 
   def test_siren_after_revocation_during_fault(self):
-    # DQ-367: a fault seen while authority was granted still sounds after 1 s when authority is revoked meanwhile
+    # DQ-367: a fault seen while authority was granted still sounds after 0.7 s when authority is revoked meanwhile
     # (SWSR-408: the host's refused torque frames revoke it after 50 ms)
     n = self.lib.persist_ticks()
     first = self._run(5, True, True)
     rest = self._run(n + 10, True, False)
     results = first + rest
-    self.assertFalse(any(results[:n - 1]), "siren before the fault persisted 1 s")
-    self.assertTrue(all(results[n - 1:]), "no siren 1 s after a fault that began while engaged")
+    self.assertFalse(any(results[:n - 1]), "siren before the fault persisted 0.7 s")
+    self.assertTrue(all(results[n - 1:]), "no siren 0.7 s after a fault that began while engaged")
 
   def test_no_siren_after_fault_cleared_without_authority(self):
     # once the fault clears, a new fault without authority does not inherit the earlier engagement
