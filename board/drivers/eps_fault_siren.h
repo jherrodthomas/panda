@@ -10,6 +10,10 @@
 // persist. Short temporary codes during a message drop-out are common and a siren on each would teach the driver to
 // ignore it (decision 2026-10-12: persistent faults only, 1 s).
 //
+// A fault counts once it has been seen while authority was granted, and keeps counting after authority is revoked
+// (LionDriver decision DQ-367): since SWSR-408 counts only accepted command frames, a host that keeps requesting torque
+// through the fault loses authority 50 ms after the envelope starts refusing its frames, and the siren must still sound.
+//
 // Once triggered, the siren sounds for at least EPS_FAULT_SIREN_HOLD_TICKS (as long as the 3 s siren on heartbeat
 // loss), and is re-triggered while the fault persists. Runs in the 100 Hz safety task; the 8 Hz tick drives the
 // speaker, so the siren starts within 1 s + 10 ms + 125 ms of the fault onset.
@@ -19,16 +23,26 @@
 
 static uint32_t eps_fault_persist_ticks = 0U;
 static uint32_t eps_fault_siren_ticks = 0U;
+static bool eps_fault_seen_engaged = false;
 
 // called on every safety mode change: a new mode starts without a pending siren
 void eps_fault_siren_reset(void) {
   eps_fault_persist_ticks = 0U;
   eps_fault_siren_ticks = 0U;
+  eps_fault_seen_engaged = false;
 }
 
 // called from the 100 Hz safety task; returns true while the siren shall sound
 bool eps_fault_siren_tick(bool eps_fault, bool engaged) {
-  if (eps_fault && engaged) {
+  if (!eps_fault) {
+    eps_fault_seen_engaged = false;
+  } else if (engaged) {
+    eps_fault_seen_engaged = true;
+  } else {
+    // fault without authority: keeps the state it had
+  }
+
+  if (eps_fault && eps_fault_seen_engaged) {
     if (eps_fault_persist_ticks < EPS_FAULT_SIREN_PERSIST_TICKS) {
       eps_fault_persist_ticks += 1U;
     }
