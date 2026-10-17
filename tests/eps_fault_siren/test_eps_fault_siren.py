@@ -87,6 +87,23 @@ class TestEpsFaultSiren(unittest.TestCase):
     self.assertTrue(self._run(n, True, True)[-1])
     self.assertTrue(all(self._run(hold - 1, True, False)))
 
+  def test_siren_after_revocation_during_fault(self):
+    # DQ-367: a fault seen while authority was granted still sounds after 1 s when authority is revoked meanwhile
+    # (SWSR-408: the host's refused torque frames revoke it after 50 ms)
+    n = self.lib.persist_ticks()
+    first = self._run(5, True, True)
+    rest = self._run(n + 10, True, False)
+    results = first + rest
+    self.assertFalse(any(results[:n - 1]), "siren before the fault persisted 1 s")
+    self.assertTrue(all(results[n - 1:]), "no siren 1 s after a fault that began while engaged")
+
+  def test_no_siren_after_fault_cleared_without_authority(self):
+    # once the fault clears, a new fault without authority does not inherit the earlier engagement
+    n = self.lib.persist_ticks()
+    self._run(5, True, True)
+    self._run(1, False, False)
+    self.assertFalse(any(self._run(n * 2, True, False)))
+
   def test_persistence_restarts_after_clear(self):
     n = self.lib.persist_ticks()
     self._run(n - 1, True, True)
