@@ -42,6 +42,7 @@ uint16_t rejected(void) { return reference_requests_rejected; }
 void set_rejected(uint16_t n) { reference_requests_rejected = n; }
 uint16_t build_flags(void) { return reference_build_health_flags(); }
 void ignition(bool on) { reference_lock_ignition_update(on); }
+void relay(bool malfunction) { reference_lock_relay_malfunction_update(malfunction); }
 """
 
 # A build without LIONDRIVER_REFERENCE has no gate; only the build flag can be checked.
@@ -80,6 +81,7 @@ def build(tmp, name, defines, harness=HARNESS):
   so.rejected.restype = ctypes.c_uint16
   so.set_rejected.argtypes = [ctypes.c_uint16]
   so.ignition.argtypes = [ctypes.c_bool]
+  so.relay.argtypes = [ctypes.c_bool]
   return so
 
 
@@ -225,6 +227,45 @@ class TestReferenceLock(unittest.TestCase):
     self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
     self.ref.set_mode(NOOUTPUT)
     self.assertFalse(self.ref.allowed(0xdc, ELM327, 1))
+    self.assertEqual(self.ref.rejected(), 1)
+
+  def test_toyota_refused_after_a_relay_malfunction_while_ignition_on(self):
+    # DFA DM-25: a mode set clears opendbc's relay_malfunction and the stock-ECU check is blind for the first second of
+    # the new mode, so a mode cycle must not re-arm the car mode with a stuck harness switch
+    self.ref.ignition(True)
+    self.ref.set_mode(TOYOTA)
+    self.ref.relay(True)  # seen by the tick, or by set_safety_mode() just before it changes mode
+    self.ref.set_mode(NOOUTPUT)
+    self.ref.relay(False)  # cleared by the mode set
+    self.assertFalse(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+    # the downgrade modes stay available; a 1 Hz tick with the ignition on keeps the latch
+    self.assertTrue(self.ref.allowed(0xdc, SILENT, 0))
+    self.ref.ignition(True)
+    self.ref.set_mode(SILENT)
+    self.assertFalse(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+
+  def test_toyota_allowed_again_after_ignition_off(self):
+    self.ref.ignition(True)
+    self.ref.relay(True)
+    self.ref.set_mode(NOOUTPUT)
+    self.assertFalse(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+    self.ref.ignition(False)
+    self.ref.ignition(True)
+    self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+
+  def test_no_relay_malfunction_keeps_toyota(self):
+    self.ref.ignition(True)
+    for _ in range(3):
+      self.ref.relay(False)
+      self.ref.set_mode(NOOUTPUT)
+      self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+
+  def test_refused_toyota_after_relay_malfunction_counted(self):
+    self.ref.set_rejected(0)
+    self.ref.ignition(True)
+    self.ref.relay(True)
+    self.ref.set_mode(NOOUTPUT)
+    self.assertFalse(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
     self.assertEqual(self.ref.rejected(), 1)
 
   def test_pandad_onroad_requests_allowed(self):

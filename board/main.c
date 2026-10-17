@@ -43,6 +43,7 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
   // particular a higher-priority safety task) sees rx_checks and rx_checks_len from different modes.
   // set_safety_hooks only resets state and copies the configuration; it does not wait on hardware.
   ENTER_CRITICAL();
+  reference_lock_relay_malfunction_update(relay_malfunction);  // DFA DM-25: before set_safety_hooks clears it
   int err = set_safety_hooks(mode_copy, param);
   eps_fault_siren_reset();  // LionDriver TSR-516(b): no siren carried over from the previous mode
   heartbeat_siren_reset();
@@ -184,6 +185,7 @@ static void tick_handler(void) {
       }
     }
     relay_malfunction_prev = relay_malfunction;
+    reference_lock_relay_malfunction_update(relay_malfunction);
 
     // re-init everything that uses harness status
     if (harness.status != prev_harness_status) {

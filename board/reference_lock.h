@@ -32,6 +32,8 @@ static uint16_t reference_requests_rejected = 0U;
 // ignition state from the 1 Hz tick, and whether TOYOTA was accepted since the ignition was last seen off
 static bool reference_ignition = false;
 static bool reference_car_mode_this_ignition = false;
+// whether a relay malfunction was seen since the ignition was last seen off (DFA DM-25)
+static bool reference_relay_fault_this_ignition = false;
 #endif
 
 // Called at 1 Hz from main() with the ignition state (line or CAN). No effect outside the reference build.
@@ -40,9 +42,25 @@ static inline void reference_lock_ignition_update(bool ignition) {
   reference_ignition = ignition;
   if (!ignition) {
     reference_car_mode_this_ignition = false;
+    reference_relay_fault_this_ignition = false;
   }
 #else
   (void)ignition;
+#endif
+}
+
+// Relay malfunction latch (LionDriver DFA DM-25): a safety mode change clears opendbc's relay_malfunction, and
+// stock_ecu_check() does not look again until the new mode has run for more than 1 s. So once a relay malfunction
+// has been seen, TOYOTA is refused until the ignition goes off: a stuck harness switch cannot be hidden by a mode
+// cycle and a quick re-engagement. Called from the tick and from set_safety_mode() before the mode is changed.
+// No effect outside the reference build.
+static inline void reference_lock_relay_malfunction_update(bool malfunction) {
+#ifdef LIONDRIVER_REFERENCE
+  if (malfunction) {
+    reference_relay_fault_this_ignition = true;
+  }
+#else
+  (void)malfunction;
 #endif
 }
 
@@ -59,7 +77,8 @@ static bool reference_request_allowed(const ControlPacket_t *req) {
         bool elm327_allowed = !(reference_ignition && reference_car_mode_this_ignition);
         allowed = (req->param1 == SAFETY_SILENT) || (req->param1 == SAFETY_NOOUTPUT) ||
                   ((req->param1 == SAFETY_ELM327) && elm327_allowed) ||
-                  ((req->param1 == SAFETY_TOYOTA) && (req->param2 == LIONDRIVER_REFERENCE_TOYOTA_PARAM));
+                  ((req->param1 == SAFETY_TOYOTA) && (req->param2 == LIONDRIVER_REFERENCE_TOYOTA_PARAM) &&
+                   !reference_relay_fault_this_ignition);
         // set whatever the cached ignition says (it lags by up to 1 s); the 1 Hz tick clears it while the ignition is off
         if (allowed && (req->param1 == SAFETY_TOYOTA)) {
           reference_car_mode_this_ignition = true;
