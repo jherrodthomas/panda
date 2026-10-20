@@ -35,6 +35,33 @@ TSR401_BUDGET_S = 0.2
 POLL_TIMEOUT_S = 1.5
 
 
+# LionDriver TSR-408: while authority is granted, the reference build revokes it when STEERING_LKA (50 ms) or
+# ACC_CONTROL (100 ms) stops arriving from the SoC, so a test that keeps authority sends them like the SoC does
+SOC_STEP_S = 0.010     # STEERING_LKA at 100 Hz, as the SoC sends it (and within its TSR-518 rate budget)
+ACC_CONTROL_EVERY = 3  # steps: 33 Hz, within the ACC_CONTROL rate budget
+
+
+class SocSim:
+  """Plays the engaged SoC from the host side: heartbeat, STEERING_LKA and ACC_CONTROL. Each call to step() waits
+  until 10 ms after the previous one, so a polling loop that calls it never sends faster than the SoC does."""
+
+  def __init__(self, panda):
+    self.panda = panda
+    self.packer = CANPacker(DBC)
+    self.steps = 0
+    self.next_step = 0.0
+
+  def step(self, heartbeat=True):
+    time.sleep(max(0.0, self.next_step - time.monotonic()))
+    self.next_step = time.monotonic() + SOC_STEP_S
+    if heartbeat:
+      self.panda.send_heartbeat(engaged=True)
+    self.panda.can_send(*self.packer.make_can_msg("STEERING_LKA", 0, {"STEER_TORQUE_CMD": 0, "STEER_REQUEST": 0}))
+    if self.steps % ACC_CONTROL_EVERY == 0:
+      self.panda.can_send(*self.packer.make_can_msg("ACC_CONTROL", 0, {"ACCEL_CMD": 0.0}))
+    self.steps += 1
+
+
 class CarSim:
   """Sends the Toyota RX check messages from the jungle at their nominal rates on bus 0."""
 
@@ -86,6 +113,7 @@ class TestToyotaRxTimeout(PandaTestCase):
     super().setUp()
     from panda.tests.hitl.base import _panda_jungle
     self.sim = CarSim(_panda_jungle)
+    self.soc = SocSim(self.p)
     self.p.set_safety_mode(TOYOTA, REFERENCE_PARAM)
     self.sim.start()
     self.addCleanup(self.p.set_safety_mode, SILENT)
@@ -117,7 +145,7 @@ class TestToyotaRxTimeout(PandaTestCase):
         self.sim.stopped.add(name)
         elapsed = None
         while time.monotonic() - t0 < POLL_TIMEOUT_S:
-          self.p.send_heartbeat(engaged=True)
+          self.soc.step()  # the SoC keeps commanding, so only the RX check can revoke
           if not self.p.health()["controls_allowed"]:
             elapsed = time.monotonic() - t0
             break

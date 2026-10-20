@@ -142,8 +142,9 @@ static void safety_task_handler(void) {
     safety_tick();
     // LionDriver TSR-407: no SoC heartbeat for > 0.3 s in a car mode revokes all authority
     const bool heartbeat_revoke = heartbeat_monitor_tick() && is_car_safety_mode(current_safety_mode);
-    // LionDriver TSR-516(b): siren at once when this revokes granted authority (evaluated before the revocation)
-    heartbeat_siren_active = heartbeat_siren_tick(heartbeat_revoke, controls_allowed);
+    // LionDriver TSR-516(b): siren at once when this (evaluated before the revocation) or the TX-arrival check in
+    // safety_tick() (TSR-408, DQ-404 A) revokes granted authority, so a SoC stall is never silent
+    heartbeat_siren_active = heartbeat_siren_tick(heartbeat_revoke, controls_allowed, safety_tx_arrival_revoked);
     if (heartbeat_revoke) {
       controls_allowed = false;
     }
