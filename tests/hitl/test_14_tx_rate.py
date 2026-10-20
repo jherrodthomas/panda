@@ -14,7 +14,7 @@ import unittest
 
 from opendbc.can.packer import CANPacker
 from panda.tests.hitl.base import PandaTestCase, panda_test
-from panda.tests.hitl.test_12_rx_timeout import DBC, REFERENCE_PARAM, SILENT, TOYOTA, CarSim
+from panda.tests.hitl.test_12_rx_timeout import DBC, REFERENCE_PARAM, SILENT, TOYOTA, CarSim, SocSim
 
 
 @unittest.skipUnless(os.environ.get("REFERENCE_BUILD") == "1", "needs a LIONDRIVER_REFERENCE=1 panda build")
@@ -47,10 +47,9 @@ class TestTxRate(PandaTestCase):
   def test_nominal_rate_passes(self):
     self.assertTrue(self._engage())
     before = self.p.health()["safety_tx_blocked"]
-    for _ in range(100):  # 1 s at 100 Hz
-      self.p.can_send(*self._lka())
-      self.p.send_heartbeat(engaged=True)
-      time.sleep(0.01)
+    soc = SocSim(self.p)  # STEERING_LKA at 100 Hz, and ACC_CONTROL so that TSR-408 does not revoke
+    for _ in range(100):  # 1 s
+      soc.step()
     health = self.p.health()
     self.assertEqual(health["safety_tx_blocked"], before)
     self.assertTrue(health["controls_allowed"])

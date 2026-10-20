@@ -225,7 +225,7 @@ bool heartbeat_monitor_tick(void);
 // ******************** heartbeat_siren ********************
 // LionDriver TSR-516(b): siren when heartbeat loss revokes granted authority, see board/drivers/heartbeat_siren.h
 void heartbeat_siren_reset(void);
-bool heartbeat_siren_tick(bool heartbeat_revoke, bool authority_granted);
+bool heartbeat_siren_tick(bool heartbeat_revoke, bool authority_granted, bool tx_arrival_revoked);
 
 // ******************** eps_fault_siren ********************
 // LionDriver TSR-516(b): siren on a persistent EPS fault, see board/drivers/eps_fault_siren.h
