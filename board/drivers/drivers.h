@@ -225,7 +225,15 @@ bool heartbeat_monitor_tick(void);
 // ******************** heartbeat_siren ********************
 // LionDriver TSR-516(b): siren when heartbeat loss revokes granted authority, see board/drivers/heartbeat_siren.h
 void heartbeat_siren_reset(void);
-bool heartbeat_siren_tick(bool heartbeat_revoke, bool authority_granted, bool tx_arrival_revoked);
+bool heartbeat_siren_tick(bool heartbeat_revoke, bool authority_granted, bool start_siren);
+
+#ifdef LIONDRIVER_REFERENCE
+// ******************** engaged_mismatch ********************
+// LionDriver TSR-307(a), TSR-516(c): heartbeat "not engaged" while authority is granted, see
+// board/drivers/engaged_mismatch.h (reference build)
+void engaged_mismatch_reset(void);
+bool engaged_mismatch_tick(bool authority_granted, bool heartbeat_engaged_flag, bool cruise_engaged, bool *siren);
+#endif
 
 // ******************** eps_fault_siren ********************
 // LionDriver TSR-516(b): siren on a persistent EPS fault, see board/drivers/eps_fault_siren.h

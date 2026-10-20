@@ -29,11 +29,11 @@ void heartbeat_siren_reset(void) {
   heartbeat_siren_ticks = 0U;
 }
 
-// called from the 100 Hz safety task after safety_tick() and before the heartbeat revocation; tx_arrival_revoked is
-// true in the task in which the arrival check revoked granted authority (safety_tx_arrival_revoked); returns true
-// while the siren shall sound
-bool heartbeat_siren_tick(bool heartbeat_revoke, bool authority_granted, bool tx_arrival_revoked) {
-  if ((heartbeat_revoke && authority_granted) || tx_arrival_revoked) {
+// called from the 100 Hz safety task after safety_tick() and before the heartbeat revocation; start_siren is true
+// in the task in which the arrival check revoked granted authority (safety_tx_arrival_revoked) or the engaged
+// mismatch asks for the siren (engaged_mismatch.h, TSR-516(c)); returns true while the siren shall sound
+bool heartbeat_siren_tick(bool heartbeat_revoke, bool authority_granted, bool start_siren) {
+  if ((heartbeat_revoke && authority_granted) || start_siren) {
     heartbeat_siren_ticks = HEARTBEAT_SIREN_HOLD_TICKS;
   } else if (heartbeat_siren_ticks > 0U) {
     heartbeat_siren_ticks -= 1U;
