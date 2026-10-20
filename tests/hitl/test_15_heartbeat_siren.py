@@ -1,7 +1,7 @@
 """LionDriver HIL test: heartbeat loss revokes authority within 0.3 s (TSR-407), a SoC stall revokes it on the
 missing command frames (TSR-408), and each sounds the siren (TSR-516(a)/(b), DQ-404 A).
 
-Verifies SWSR-407, SWSR-408 and SWSR-516 (heartbeat loss, SoC stall) on the device (LionDriver WP-V-05). Needs:
+Verifies SWSR-307, SWSR-407, SWSR-408 and SWSR-516 (heartbeat "not engaged", heartbeat loss, SoC stall) on the device (LionDriver WP-V-05). Needs:
   - a panda flashed with a reference build: LIONDRIVER_REFERENCE=1 scons (the car simulation sends the reference
     RX set; the heartbeat monitor and this siren are in every build)
   - a panda jungle on the default harness orientation, which plays the car on bus 0
@@ -22,6 +22,7 @@ from panda.tests.hitl.test_12_rx_timeout import REFERENCE_PARAM, SILENT, TOYOTA,
 
 TSR407_TIMEOUT_S = 0.3
 TSR408_LKA_TIMEOUT_S = 0.05  # STEERING_LKA, the first supervised frame to time out
+TSR307A_MISMATCH_S = 0.3     # heartbeat "not engaged" while authority is granted (engaged_mismatch.h)
 SAFETY_TASK_PERIOD_S = 0.01
 USB_POLL_SLACK_S = 0.05     # health request round trip on the bench
 POLL_PERIOD_S = 0.005
@@ -90,6 +91,24 @@ class TestHeartbeatSiren(PandaTestCase):
     self.assertIsNotNone(elapsed, "authority not revoked within 2 s of the last frame")
     self.assertLess(elapsed, TSR407_TIMEOUT_S, "revoked by the heartbeat monitor, not the arrival check")
     self.assertLessEqual(elapsed, TSR408_LKA_TIMEOUT_S + SAFETY_TASK_PERIOD_S + USB_POLL_SLACK_S)
+
+  def test_not_engaged_heartbeat_revokes_within_0_3_s(self):
+    # TSR-307(a) / TSR-516(c): selfdrived stops while pandad keeps the heartbeat, which now reports "not engaged";
+    # the frames keep arriving and the car simulation keeps PCM cruise active (no cancel reaches it). Authority is
+    # revoked within 0.3 s, and the siren must sound at 0.5 s
+    self.assertTrue(self._engage())
+    for _ in range(20):
+      self.soc.step()
+    first = time.monotonic()
+    elapsed = None
+    while time.monotonic() - first < 2.0:
+      self.soc.step(engaged=False)
+      if not self.p.health()["controls_allowed"]:
+        elapsed = time.monotonic() - first
+        break
+    print(f"heartbeat not engaged: revoked {elapsed} s after the first such heartbeat; the siren must sound at 0.5 s")
+    self.assertIsNotNone(elapsed, "authority not revoked within 2 s")
+    self.assertLessEqual(elapsed, TSR307A_MISMATCH_S + SAFETY_TASK_PERIOD_S + USB_POLL_SLACK_S)
 
 
 if __name__ == "__main__":

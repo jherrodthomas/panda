@@ -51,11 +51,11 @@ class SocSim:
     self.steps = 0
     self.next_step = 0.0
 
-  def step(self, heartbeat=True):
+  def step(self, heartbeat=True, engaged=True):
     time.sleep(max(0.0, self.next_step - time.monotonic()))
     self.next_step = time.monotonic() + SOC_STEP_S
     if heartbeat:
-      self.panda.send_heartbeat(engaged=True)
+      self.panda.send_heartbeat(engaged=engaged)
     self.panda.can_send(*self.packer.make_can_msg("STEERING_LKA", 0, {"STEER_TORQUE_CMD": 0, "STEER_REQUEST": 0}))
     if self.steps % ACC_CONTROL_EVERY == 0:
       self.panda.can_send(*self.packer.make_can_msg("ACC_CONTROL", 0, {"ACCEL_CMD": 0.0}))

@@ -9,6 +9,9 @@
 #include "board/drivers/heartbeat_monitor.h"
 #include "board/drivers/eps_fault_siren.h"
 #include "board/drivers/heartbeat_siren.h"
+#ifdef LIONDRIVER_REFERENCE
+#include "board/drivers/engaged_mismatch.h"
+#endif
 #include "board/drivers/irq_priorities.h"
 #ifdef LIONDRIVER_FAULT_INJECTION
 #include "board/drivers/fault_injection.h"
@@ -47,6 +50,9 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
   int err = set_safety_hooks(mode_copy, param);
   eps_fault_siren_reset();  // LionDriver TSR-516(b): no siren carried over from the previous mode
   heartbeat_siren_reset();
+#ifdef LIONDRIVER_REFERENCE
+  engaged_mismatch_reset();
+#endif
   EXIT_CRITICAL();
   if (err == -1) {
     print("Error: safety set mode failed. Falling back to SILENT\n");
@@ -142,12 +148,25 @@ static void safety_task_handler(void) {
     safety_tick();
     // LionDriver TSR-407: no SoC heartbeat for > 0.3 s in a car mode revokes all authority
     const bool heartbeat_revoke = heartbeat_monitor_tick() && is_car_safety_mode(current_safety_mode);
+    // LionDriver TSR-307(a): a heartbeat "not engaged" while authority is granted revokes within 0.3 s; TSR-516(c):
+    // the siren starts when PCM cruise is still active 0.5 s after it (reference build)
+    bool engaged_mismatch_siren = false;
+    #ifdef LIONDRIVER_REFERENCE
+    const bool engaged_mismatch_revoke = engaged_mismatch_tick(controls_allowed, heartbeat_engaged, cruise_engaged_prev,
+                                                               &engaged_mismatch_siren);
+    #endif
     // LionDriver TSR-516(b): siren at once when this (evaluated before the revocation) or the TX-arrival check in
     // safety_tick() (TSR-408, DQ-404 A) revokes granted authority, so a SoC stall is never silent
-    heartbeat_siren_active = heartbeat_siren_tick(heartbeat_revoke, controls_allowed, safety_tx_arrival_revoked);
+    heartbeat_siren_active = heartbeat_siren_tick(heartbeat_revoke, controls_allowed,
+                                                  safety_tx_arrival_revoked || engaged_mismatch_siren);
     if (heartbeat_revoke) {
       controls_allowed = false;
     }
+    #ifdef LIONDRIVER_REFERENCE
+    if (engaged_mismatch_revoke) {
+      controls_allowed = false;
+    }
+    #endif
     // LionDriver TSR-516(b): siren when the EPS fault (TSR-110) persists while authority is granted
     eps_fault_siren_active = eps_fault_siren_tick(safety_eps_fault, controls_allowed);
     hw_watchdog_tick();
