@@ -14,7 +14,7 @@ import unittest
 
 from opendbc.can.packer import CANPacker
 from panda.tests.hitl.base import PandaTestCase, panda_test
-from panda.tests.hitl.test_12_rx_timeout import DBC, REFERENCE_PARAM, SILENT, TOYOTA, CarSim
+from panda.tests.hitl.test_12_rx_timeout import DBC, ENGAGE_SETTLE_S, REFERENCE_PARAM, SILENT, TOYOTA, CarSim, SocSim
 
 FAULT_CODES = (0, 3, 9, 11, 17, 21, 25)
 NO_FAULT_CODES = (1, 5)
@@ -28,6 +28,7 @@ class TestEpsFault(PandaTestCase):
     from panda.tests.hitl.base import _panda_jungle
     self.sim = CarSim(_panda_jungle)
     self.packer = CANPacker(DBC)
+    self.soc = SocSim(self.p)
     self.p.set_safety_mode(TOYOTA, REFERENCE_PARAM)
     self.sim.start()
     self.addCleanup(self.p.set_safety_mode, SILENT)
@@ -42,14 +43,20 @@ class TestEpsFault(PandaTestCase):
     self.sim.cruise_active = True
     time.sleep(0.1)
     self.p.send_heartbeat(engaged=True)
+    time.sleep(ENGAGE_SETTLE_S)
     return self.p.health()["controls_allowed"]
+
+  def _hold(self, seconds):
+    # LionDriver TSR-408: authority is revoked when STEERING_LKA stops for 50 ms, so keep the SoC frames going
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+      self.soc.step()
 
   def _lka_tx_blocked(self, torque):
     before = self.p.health()["safety_tx_blocked"]
     addr, dat, bus = self.packer.make_can_msg("STEERING_LKA", 0, {"STEER_TORQUE_CMD": torque, "STEER_REQUEST": 1})
     self.p.can_send(addr, dat, bus)
-    time.sleep(0.05)
-    self.p.send_heartbeat(engaged=True)
+    self._hold(0.05)
     return self.p.health()["safety_tx_blocked"] > before
 
   def test_fault_reported_and_lka_refused(self):
@@ -59,8 +66,7 @@ class TestEpsFault(PandaTestCase):
         time.sleep(0.1)
         self.assertTrue(self._engage())
         self.sim.lka_state = code
-        time.sleep(0.1)  # a few EPS_STATUS frames at 25 Hz
-        self.p.send_heartbeat(engaged=True)
+        self._hold(0.1)  # a few EPS_STATUS frames at 25 Hz
         health = self.p.health()
         fault = code in FAULT_CODES
         self.assertEqual(fault, health["eps_fault"])

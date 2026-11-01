@@ -14,7 +14,7 @@ import unittest
 
 from opendbc.can.packer import CANPacker
 from panda.tests.hitl.base import PandaTestCase, panda_test
-from panda.tests.hitl.test_12_rx_timeout import DBC, REFERENCE_PARAM, SILENT, TOYOTA, CarSim, SocSim
+from panda.tests.hitl.test_12_rx_timeout import DBC, ENGAGE_SETTLE_S, REFERENCE_PARAM, SILENT, TOYOTA, CarSim, SocSim
 
 
 @unittest.skipUnless(os.environ.get("REFERENCE_BUILD") == "1", "needs a LIONDRIVER_REFERENCE=1 panda build")
@@ -39,6 +39,7 @@ class TestTxRate(PandaTestCase):
     self.sim.cruise_active = True
     time.sleep(0.1)
     self.p.send_heartbeat(engaged=True)
+    time.sleep(ENGAGE_SETTLE_S)
     return self.p.health()["controls_allowed"]
 
   def _lka(self):
