@@ -33,6 +33,9 @@ SAFETY_TASK_PERIOD_S = 0.010
 # jungle's send jitter on top of the firmware's detection time.
 TSR401_BUDGET_S = 0.2
 POLL_TIMEOUT_S = 1.5
+# LS-06: the engaged heartbeat only arms the grant; the next safety task run (every 10 ms) grants authority, so a
+# test reads the health packet two task periods after it, not at once
+ENGAGE_SETTLE_S = 2 * SAFETY_TASK_PERIOD_S
 
 
 # LionDriver TSR-408: while authority is granted, the reference build revokes it when STEERING_LKA (50 ms) or
@@ -80,6 +83,8 @@ class CarSim:
       values = {"CRUISE_ACTIVE": int(self.cruise_active), "GAS_RELEASED": 1}
     elif name == "EPS_STATUS":
       values = {"LKA_STATE": self.lka_state}
+    elif name == "PCM_CRUISE_2":
+      values = {"MAIN_ON": 1}
     addr, dat, bus = self.packer.make_can_msg(name, 0, values)
     return addr, dat, bus
 
@@ -129,6 +134,7 @@ class TestToyotaRxTimeout(PandaTestCase):
     self.sim.cruise_active = True
     time.sleep(0.1)
     self.p.send_heartbeat(engaged=True)
+    time.sleep(ENGAGE_SETTLE_S)
     return self.p.health()["controls_allowed"]
 
   def test_engages_with_all_messages(self):

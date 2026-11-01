@@ -23,7 +23,7 @@ import time
 import unittest
 
 from panda.tests.hitl.base import PandaTestCase, panda_test
-from panda.tests.hitl.test_12_rx_timeout import REFERENCE_PARAM, SILENT, TOYOTA, CarSim, SocSim
+from panda.tests.hitl.test_12_rx_timeout import ENGAGE_SETTLE_S, REFERENCE_PARAM, SILENT, TOYOTA, CarSim, SocSim
 
 TSR307A_MISMATCH_S = 0.3    # ENGAGED_MISMATCH_REVOKE_TICKS at 100 Hz
 TSR516C_SIREN_S = 0.5       # ENGAGED_MISMATCH_SIREN_TICKS at 100 Hz
@@ -56,6 +56,7 @@ class TestEngagedMismatchSiren(PandaTestCase):
     self.sim.cruise_active = True
     time.sleep(0.1)
     self.p.send_heartbeat(engaged=True)
+    time.sleep(ENGAGE_SETTLE_S)
     ok = self.p.health()["controls_allowed"]
     for _ in range(20):
       self.soc.step()
