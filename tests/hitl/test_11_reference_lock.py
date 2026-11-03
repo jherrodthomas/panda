@@ -1,6 +1,6 @@
 """LionDriver HIL test: the safety-mode lock of the reference build (TSR-512/513).
 
-Verifies SWSR-512, SWSR-512a and SWSR-513 on the device (LionDriver WP-V-05). Needs:
+Verifies SWSR-512, SWSR-512a, SWSR-513 and SWSR-513b on the device (LionDriver WP-V-05). Needs:
   - a panda flashed with a reference build: LIONDRIVER_REFERENCE=1 scons
     (or the reference release build, RELEASE=1 LIONDRIVER_REFERENCE=1)
   - HITL=1 REFERENCE_BUILD=1 in the environment
@@ -12,7 +12,7 @@ import time
 import unittest
 
 from opendbc.car.structs import CarParams
-from panda.tests.hitl.base import SPEED_NORMAL, PandaTestCase
+from panda.tests.hitl.base import PandaTestCase
 
 SILENT = CarParams.SafetyModel.silent
 NOOUTPUT = CarParams.SafetyModel.noOutput
@@ -21,7 +21,7 @@ TOYOTA = CarParams.SafetyModel.toyota
 HONDA = CarParams.SafetyModel.hondaNidec
 REFERENCE_PARAM = 73
 SETTLE_S = 0.1
-OTHER_SPEED = 250  # kbps; the bus runs at SPEED_NORMAL
+OTHER_SPEED = 250  # kbps; the bus runs at a different speed (SPEED_NORMAL)
 
 
 @unittest.skipUnless(os.environ.get("REFERENCE_BUILD") == "1", "needs a LIONDRIVER_REFERENCE=1 panda build")
@@ -81,7 +81,8 @@ class TestReferenceLock(PandaTestCase):
     time.sleep(SETTLE_S)
     self.assertEqual(p.can_health(0)["can_speed"], speed)
 
-    # the same requests work outside a car mode
+    # outside a car mode power save works; the CAN bit rate stays refused in every mode (SWSR-513b), so no setting
+    # made after a downgrade carries into the next TOYOTA
     self._set_mode(NOOUTPUT)
     p.set_power_save(True)
     time.sleep(SETTLE_S)
@@ -89,8 +90,7 @@ class TestReferenceLock(PandaTestCase):
     p.set_power_save(False)
     p.set_can_speed_kbps(0, OTHER_SPEED)
     time.sleep(SETTLE_S)
-    self.assertNotEqual(p.can_health(0)["can_speed"], speed)
-    p.set_can_speed_kbps(0, SPEED_NORMAL)
+    self.assertEqual(p.can_health(0)["can_speed"], speed)
 
 
 if __name__ == "__main__":
