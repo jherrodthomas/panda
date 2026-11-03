@@ -18,7 +18,7 @@ static inline uint16_t reference_build_health_flags(void) {
 // LionDriver reference build (TSR-512/513, SWSR-512/512a/513): the 2020 Corolla LE TSS2 reference
 // configuration. The host may only request SILENT, NOOUTPUT, ELM327 and TOYOTA with the reference
 // parameter; once TOYOTA is active only NOOUTPUT or SILENT. The alternative experience stays at its
-// reset value (0). Requests that change actuation, relay, CAN or comms state are refused in a car mode.
+// reset value (0). In a car mode only the requests on an allow-list are accepted (SWSR-513).
 // Internal safety mode changes (heartbeat loss, faults) do not pass through here and are not affected.
 //
 // Diagnostic mode (LD-DES-001 DR-05, DFA DFI-08): ELM327 is used for fingerprinting before the car mode is
@@ -66,47 +66,89 @@ static inline void reference_lock_relay_malfunction_update(bool malfunction) {
 
 #ifdef LIONDRIVER_REFERENCE
 
-static bool reference_request_allowed(const ControlPacket_t *req) {
+// 0xdc: the safety modes the host may set (SWSR-512)
+static bool reference_safety_mode_request_allowed(const ControlPacket_t *req) {
+  bool allowed;
+  if (current_safety_mode == SAFETY_TOYOTA) {
+    allowed = (req->param1 == SAFETY_NOOUTPUT) || (req->param1 == SAFETY_SILENT);
+  } else {
+    bool elm327_allowed = !(reference_ignition && reference_car_mode_this_ignition);
+    allowed = (req->param1 == SAFETY_SILENT) || (req->param1 == SAFETY_NOOUTPUT) ||
+              ((req->param1 == SAFETY_ELM327) && elm327_allowed) ||
+              ((req->param1 == SAFETY_TOYOTA) && (req->param2 == LIONDRIVER_REFERENCE_TOYOTA_PARAM) &&
+               !reference_relay_fault_this_ignition);
+    // set whatever the cached ignition says (it lags by up to 1 s); the 1 Hz tick clears it while the ignition is off
+    if (allowed && (req->param1 == SAFETY_TOYOTA)) {
+      reference_car_mode_this_ignition = true;
+    }
+  }
+  return allowed;
+}
+
+// In a car mode only what pandad sends while driving is accepted, everything else is refused, future requests
+// included (SWSR-513, WP-S-05 §4.2a, DQ-147 A): heartbeat, health and CAN health, fan and IR, CAN comms reset,
+// the debug log, the reads of a pandad restart (UID, hardware type, packet and firmware versions, signature),
+// the safety mode (0xdc) and leaving power save (0xe7 with param1 0).
+static bool reference_car_mode_request_allowed(const ControlPacket_t *req) {
+  static const uint8_t reference_car_mode_requests[] = {
+    0xf3U, 0xd2U, 0xc2U, 0xb0U, 0xb1U, 0xb2U, 0xc0U, 0xe0U,  // pandad's loop
+    0xc3U, 0xc1U, 0xddU, 0xd6U, 0xd3U, 0xd4U,                // the reads of a pandad restart
+  };
+  bool allowed = false;
+  if (req->request == 0xdcU) {
+    allowed = reference_safety_mode_request_allowed(req);
+  } else if (req->request == 0xe7U) {
+    allowed = (req->param1 == 0U);
+  } else {
+    for (uint32_t i = 0U; i < (sizeof(reference_car_mode_requests) / sizeof(reference_car_mode_requests[0])); i++) {
+      if (req->request == reference_car_mode_requests[i]) {
+        allowed = true;
+      }
+    }
+  }
+  return allowed;
+}
+
+// Outside a car mode (SILENT, NOOUTPUT, ELM327): requests that act on the relay, the CAN bit rates, loopback, the
+// clock output or the heartbeat check are refused in every mode (SWSR-513b), so a downgrade from TOYOTA cannot use
+// them and no setting carries into the next TOYOTA. Once TOYOTA was accepted, softloader entry (0xd1 param 1) and OBD
+// multiplexing (0xdb) stay refused until the ignition is seen off (SWSR-513a).
+static bool reference_other_mode_request_allowed(const ControlPacket_t *req) {
   bool allowed = true;
-  bool car_mode = is_car_safety_mode(current_safety_mode);
   switch (req->request) {
     case 0xdcU:
-      if (current_safety_mode == SAFETY_TOYOTA) {
-        allowed = (req->param1 == SAFETY_NOOUTPUT) || (req->param1 == SAFETY_SILENT);
-      } else {
-        bool elm327_allowed = !(reference_ignition && reference_car_mode_this_ignition);
-        allowed = (req->param1 == SAFETY_SILENT) || (req->param1 == SAFETY_NOOUTPUT) ||
-                  ((req->param1 == SAFETY_ELM327) && elm327_allowed) ||
-                  ((req->param1 == SAFETY_TOYOTA) && (req->param2 == LIONDRIVER_REFERENCE_TOYOTA_PARAM) &&
-                   !reference_relay_fault_this_ignition);
-        // set whatever the cached ignition says (it lags by up to 1 s); the 1 Hz tick clears it while the ignition is off
-        if (allowed && (req->param1 == SAFETY_TOYOTA)) {
-          reference_car_mode_this_ignition = true;
-        }
-      }
-      break;
-    case 0xdfU:
-      allowed = false;
+      allowed = reference_safety_mode_request_allowed(req);
       break;
     case 0xd1U:
-      // softloader entry (param 1, SWSR-511a); bootloader entry (param 0) is already debug-only
-      allowed = !(car_mode && (req->param1 == 1U));
+      allowed = !((req->param1 == 1U) && reference_car_mode_this_ignition);
+      break;
+    case 0xdbU:
+      allowed = !reference_car_mode_this_ignition;
       break;
     case 0xc5U:
-    case 0xd8U:
-    case 0xdbU:
     case 0xdeU:
     case 0xe5U:
     case 0xe6U:
-    case 0xe7U:
-    case 0xe8U:
-    case 0xf1U:
+    case 0xf8U:
     case 0xf9U:
     case 0xfcU:
-      allowed = !car_mode;
+      allowed = false;
       break;
     default:
       break;
+  }
+  return allowed;
+}
+
+static bool reference_request_allowed(const ControlPacket_t *req) {
+  bool allowed;
+  if (req->request == 0xdfU) {
+    // the alternative experience stays at its reset value (SWSR-512a)
+    allowed = false;
+  } else if (is_car_safety_mode(current_safety_mode)) {
+    allowed = reference_car_mode_request_allowed(req);
+  } else {
+    allowed = reference_other_mode_request_allowed(req);
   }
   if (!allowed) {
     if (reference_requests_rejected < 0xFFFFU) {

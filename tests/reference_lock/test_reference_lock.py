@@ -58,10 +58,16 @@ uint16_t build_flags(void) { return reference_build_health_flags(); }
 
 SILENT, HONDA, TOYOTA, ELM327, ALLOUTPUT, NOOUTPUT = 0, 1, 2, 3, 17, 19
 REFERENCE_PARAM = 73
-# requests refused in a car mode (SWSR-513); 0xdf is refused in every mode (SWSR-512a)
-CAR_MODE_LOCKED = (0xc5, 0xd8, 0xdb, 0xde, 0xe5, 0xe6, 0xe7, 0xe8, 0xf1, 0xf9, 0xfc)
-# requests openpilot's pandad sends while onroad; must stay allowed
-ALWAYS_ALLOWED = (0xa8, 0xc0, 0xc1, 0xd2, 0xd6, 0xdd, 0xf3, 0xb1, 0xb2)
+# car-mode allow-list (SWSR-513, WP-S-05 §4.2a): what pandad sends while driving, a pandad restart included;
+# 0xdc (SWSR-512) and 0xe7 with param1 0 are checked by their own tests
+CAR_MODE_ALLOWED = (0xf3, 0xd2, 0xc2, 0xb0, 0xb1, 0xb2, 0xc0, 0xe0, 0xc3, 0xc1, 0xdd, 0xd6, 0xd3, 0xd4)
+# refused in every mode (SWSR-513b); 0xdf is refused in every mode too (SWSR-512a)
+EVERY_MODE_REFUSED = (0xc5, 0xde, 0xe5, 0xe6, 0xf8, 0xf9, 0xfc)
+# refused outside a car mode once TOYOTA was accepted, until the ignition is seen off (SWSR-513a)
+LATCHED_AFTER_TOYOTA = ((0xd1, 1), (0xdb, 1), (0xdb, 0))
+# refused in a car mode, allowed outside one (the rest of the request space)
+CAR_MODE_ONLY_REFUSED = (0xa8, 0xd8, 0xe7, 0xe8, 0xf1, 0xf6, 0xd0, 0xc4, 0xb6, 0xc6, 0xd1, 0xdb)
+OTHER_MODES = (SILENT, NOOUTPUT, ELM327)
 
 
 def build(tmp, name, defines, harness=HARNESS):
@@ -126,18 +132,53 @@ class TestReferenceLock(unittest.TestCase):
       self.ref.set_mode(mode)
       self.assertFalse(self.ref.allowed(0xdf, 1, 0))
 
-  def test_config_requests_refused_in_car_mode_only(self):
-    for request in CAR_MODE_LOCKED:
+  def test_car_mode_accepts_only_the_allow_list(self):
+    self.ref.set_mode(TOYOTA)
+    for request in range(0x100):
+      expected = request in CAR_MODE_ALLOWED
+      self.assertEqual(self.ref.allowed(request, 1, 1), expected, hex(request))
+
+  def test_power_save_left_but_not_entered_in_car_mode(self):
+    self.ref.set_mode(TOYOTA)
+    self.assertTrue(self.ref.allowed(0xe7, 0, 0))
+    self.assertFalse(self.ref.allowed(0xe7, 1, 0))
+
+  def test_requests_refused_in_every_mode(self):
+    for mode in (*OTHER_MODES, TOYOTA):
+      self.ref.set_mode(mode)
+      for request in EVERY_MODE_REFUSED:
+        self.assertFalse(self.ref.allowed(request, 1, 1), (mode, hex(request)))
+
+  def test_other_requests_allowed_outside_a_car_mode(self):
+    for request in CAR_MODE_ONLY_REFUSED:
       self.ref.set_mode(TOYOTA)
       self.assertFalse(self.ref.allowed(request, 1, 1), hex(request))
-      for mode in (SILENT, NOOUTPUT, ELM327):
+      for mode in OTHER_MODES:
         self.ref.set_mode(mode)
-        self.assertTrue(self.ref.allowed(request, 1, 1), hex(request))
+        self.assertTrue(self.ref.allowed(request, 1, 1), (mode, hex(request)))
+
+  def test_softloader_and_obd_latched_after_toyota_until_ignition_off(self):
+    self.ref.ignition(True)
+    self.ref.set_mode(NOOUTPUT)
+    for request, param in LATCHED_AFTER_TOYOTA:
+      self.assertTrue(self.ref.allowed(request, param, 0), (hex(request), param))
+    self.assertTrue(self.ref.allowed(0xdc, TOYOTA, REFERENCE_PARAM))
+    self.ref.set_mode(TOYOTA)
+    self.ref.set_mode(NOOUTPUT)  # downgrade, ignition still on
+    for mode in OTHER_MODES:
+      self.ref.set_mode(mode)
+      for request, param in LATCHED_AFTER_TOYOTA:
+        self.assertFalse(self.ref.allowed(request, param, 0), (mode, hex(request), param))
+      # bootloader entry (param 0) is not latched here; it is debug-only in the firmware
+      self.assertTrue(self.ref.allowed(0xd1, 0, 0))
+    self.ref.ignition(False)
+    for request, param in LATCHED_AFTER_TOYOTA:
+      self.assertTrue(self.ref.allowed(request, param, 0), (hex(request), param))
 
   def test_softloader_entry_refused_in_car_mode(self):
     self.ref.set_mode(TOYOTA)
     self.assertFalse(self.ref.allowed(0xd1, 1, 0))
-    for mode in (SILENT, NOOUTPUT, ELM327):
+    for mode in OTHER_MODES:
       self.ref.set_mode(mode)
       self.assertTrue(self.ref.allowed(0xd1, 1, 0))
 
@@ -269,9 +310,12 @@ class TestReferenceLock(unittest.TestCase):
     self.assertEqual(self.ref.rejected(), 1)
 
   def test_pandad_onroad_requests_allowed(self):
+    # pandad's loop (heartbeat, health, CAN health, fan, IR, comms reset, debug log) and the reads of a restart
     self.ref.set_mode(TOYOTA)
-    for request in ALWAYS_ALLOWED:
+    for request in CAR_MODE_ALLOWED:
       self.assertTrue(self.ref.allowed(request, 1, 1), hex(request))
+    self.assertTrue(self.ref.allowed(0xe7, 0, 0))
+    self.assertTrue(self.ref.allowed(0xdc, NOOUTPUT, 0))
 
 
 if __name__ == "__main__":
