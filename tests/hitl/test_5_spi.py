@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from panda.tests.hitl.base import PandaTestCase
 from panda import Panda
-from panda.python.spi import PandaProtocolMismatch, PandaSpiNackResponse
+from panda.python.spi import MAX_MOSI_LEN, PandaProtocolMismatch, PandaSpiNackResponse
 
 
 class TestSpi(PandaTestCase):
@@ -63,13 +63,43 @@ class TestSpi(PandaTestCase):
     self._ping(p)
 
   def test_bad_checksum(self):
+    # LionDriver SWSR-410: a data phase with a wrong CRC-32C is refused and counted
     p = self.p
     cnt = p.health()['spi_error_count']
-    with patch('panda.python.spi.PandaSpiHandle._calc_checksum', return_value=0):
+    with patch('panda.python.spi.crc32c', return_value=0):
       with self.assertRaises(PandaSpiNackResponse):
         p._handle.controlRead(Panda.REQUEST_IN, 0xd2, 0, 0, p.HEALTH_STRUCT.size, timeout=50)
     self._ping(p)
     assert (p.health()['spi_error_count'] - cnt) > 0
+
+  def test_bad_header_crc(self):
+    # LionDriver SWSR-410: a header with a wrong CRC-8 is refused before the data phase
+    p = self.p
+    cnt = p.health()['spi_error_count']
+    with patch('panda.python.spi.HEADER_CRC_POLY', 0x1D):
+      with self.assertRaises(PandaSpiNackResponse):
+        p._handle.controlRead(Panda.REQUEST_IN, 0xd2, 0, 0, p.HEALTH_STRUCT.size, timeout=50)
+    self._ping(p)
+    assert (p.health()['spi_error_count'] - cnt) > 0
+
+  def test_length_bound(self):
+    # LionDriver SWSR-412: a MOSI length beyond the 2047-byte data phase is refused at the header
+    p = self.p
+    with patch('panda.python.spi.MAX_MOSI_LEN', 4000):
+      with self.assertRaises(PandaSpiNackResponse):
+        p._handle.bulkWrite(0xAB, bytes(MAX_MOSI_LEN + 1), timeout=50)
+    self._ping(p)
+
+  def test_sequence_counter_resync(self):
+    # LionDriver SWSR-410a: a counter out of step gets a sequence NACK, counted; the library restarts its counter
+    p = self.p
+    p.health()
+    cnt = p.health()['spi_error_count']
+    with p._handle._seq_lock:
+      p._handle._seq = (p._handle._seq + 100) % 255 + 1
+    p.health()
+    self._ping(p)
+    assert (p.health()['spi_error_count'] - cnt) == 1
 
   def test_non_existent_endpoint(self):
     p = self.p
