@@ -17,20 +17,32 @@ SYNC = 0x5A
 HACK = 0x79
 DACK = 0x85
 NACK = 0x1F
-CHECKSUM_START = 0xAB
+SEQ_NACK = 0x2E  # LionDriver SWSR-410a: sequence counter out of step, restart the counter
+
+# LionDriver SPI protocol version 3 (TSR-410, 411, 412; WP-S-05 §4.1), matching board/drivers/spi.h:
+# header: sync, endpoint, MOSI length (2), max MISO length (2), CRC-8 (poly 0x2F) over the first 6 bytes
+# data: sequence counter, control-frame index, payload, CRC-32C (4) over header bytes 0-5, counter, index, payload
+# response: DACK, length (2), echoed sequence counter, payload, CRC-32C (4) over all of it
+HEADER_CRC_POLY = 0x2F
+DATA_PREFIX_SIZE = 2
+CRC_SIZE = 4
+RESP_HEADER_SIZE = 4
+MAX_DATA_PHASE = 2047  # TSR-412, enforced by the panda
+MAX_MOSI_LEN = MAX_DATA_PHASE - DATA_PREFIX_SIZE - CRC_SIZE
+MAX_MISO_LEN = MAX_DATA_PHASE - RESP_HEADER_SIZE - CRC_SIZE
 
 MIN_ACK_TIMEOUT_MS = 100
 MAX_XFER_RETRY_COUNT = 5
 
 SPI_BUF_SIZE = 4096  # from panda/board/drivers/spi.h
-XFER_SIZE = SPI_BUF_SIZE - 0x40 # give some room for SPI protocol overhead
+XFER_SIZE = 2048 - 0x40  # payload per transfer, within MAX_MOSI_LEN and MAX_MISO_LEN (as pandad)
 
 DEV_PATH = "/dev/spidev0.0"
 
 
-def crc8(data):
-  crc = 0xFF    # standard init value
-  poly = 0xD5   # standard crc8: x8+x7+x6+x4+x2+1
+def crc8(data, poly=0xD5):
+  # the panda's crc_checksum: init 0xFF, bytes from last to first; 0xD5 (x8+x7+x6+x4+x2+1) for VERSION
+  crc = 0xFF
   size = len(data)
   for i in range(size - 1, -1, -1):
     crc ^= data[i]
@@ -40,6 +52,29 @@ def crc8(data):
       else:
         crc <<= 1
   return crc
+
+
+def _crc32c_table() -> list[int]:
+  table = []
+  for i in range(256):
+    c = i
+    for _ in range(8):
+      c = (c >> 1) ^ 0x82F63B78 if (c & 1) else (c >> 1)
+    table.append(c)
+  return table
+
+CRC32C_TABLE = _crc32c_table()
+
+def crc32c(data) -> int:
+  # CRC-32C (Castagnoli): poly 0x1EDC6F41 reflected, init and final XOR 0xFFFFFFFF; crc32c(b"123456789") == 0xE3069283
+  crc = 0xFFFFFFFF
+  for b in data:
+    crc = (crc >> 8) ^ CRC32C_TABLE[(crc ^ b) & 0xFF]
+  return crc ^ 0xFFFFFFFF
+
+def next_seq(seq: int) -> int:
+  # 0 starts a session and is never reused within it: 255 is followed by 1
+  return 1 if seq == 255 else seq + 1
 
 
 class PandaSpiException(Exception):
@@ -55,6 +90,9 @@ class PandaSpiNackResponse(PandaSpiException):
   pass
 
 class PandaSpiMissingAck(PandaSpiException):
+  pass
+
+class PandaSpiSeqNack(PandaSpiException):
   pass
 
 class PandaSpiBadChecksum(PandaSpiException):
@@ -166,19 +204,14 @@ class PandaSpiHandle(BaseHandle):
   A class that mimics a libusb1 handle for panda SPI communications.
   """
 
-  PROTOCOL_VERSION = 2
+  PROTOCOL_VERSION = 3
   HEADER = struct.Struct("<BBHH")
 
   def __init__(self) -> None:
     self.dev = SpiDevice()
     self.no_retry = "NO_RETRY" in os.environ
-
-  # helpers
-  def _calc_checksum(self, data: bytes) -> int:
-    cksum = CHECKSUM_START
-    for b in data:
-      cksum ^= b
-    return cksum
+    self._seq_lock = threading.Lock()
+    self._seq = 0  # the first transfer starts the session
 
   def _wait_for_ack(self, spi, ack_val: int, timeout: int, tx: int, length: int = 1) -> bytes:
     timeout_s = max(MIN_ACK_TIMEOUT_MS, timeout) * 1e-3
@@ -190,31 +223,35 @@ class PandaSpiHandle(BaseHandle):
         return bytes(dat)
       elif dat[0] == NACK:
         raise PandaSpiNackResponse
+      elif dat[0] == SEQ_NACK:
+        raise PandaSpiSeqNack
 
     raise PandaSpiMissingAck
 
-  def _transfer_spidev(self, spi, endpoint: int, data, timeout: int, max_rx_len: int = 1000, expect_disconnect: bool = False) -> bytes:
-    max_rx_len = max(USBPACKET_MAX_SIZE, max_rx_len)
+  def _transfer_spidev(self, spi, endpoint: int, data, timeout: int, max_rx_len: int = 1000, expect_disconnect: bool = False,
+                       seq: int = 0, frame_index: int = 0) -> bytes:
+    max_rx_len = min(max(USBPACKET_MAX_SIZE, max_rx_len), MAX_MISO_LEN)
+    if len(data) > MAX_MOSI_LEN:
+      raise PandaSpiException(f"transfer longer than the protocol allows ({len(data)} > {MAX_MOSI_LEN})")
 
     logger.debug("- send header")
-    packet = self.HEADER.pack(SYNC, endpoint, len(data), max_rx_len)
-    packet += bytes([self._calc_checksum(packet), ])
-    spi.xfer2(packet)
+    header = self.HEADER.pack(SYNC, endpoint, len(data), max_rx_len)
+    spi.xfer2(header + bytes([crc8(header, HEADER_CRC_POLY), ]))
 
     logger.debug("- waiting for header ACK")
     self._wait_for_ack(spi, HACK, MIN_ACK_TIMEOUT_MS, 0x11)
 
     logger.debug("- sending data")
-    packet = bytes([*data, self._calc_checksum(data)])
-    spi.xfer2(packet)
+    body = bytes([seq, frame_index, *data])
+    spi.xfer2(body + struct.pack("<I", crc32c(header + body)))
 
     if expect_disconnect:
       logger.debug("- expecting disconnect, returning")
       return b""
     else:
       logger.debug("- waiting for data ACK")
-      preread_len = USBPACKET_MAX_SIZE + 1  # read enough for a controlRead
-      dat = self._wait_for_ack(spi, DACK, timeout, 0x13, length=3 + preread_len)
+      preread_len = USBPACKET_MAX_SIZE + CRC_SIZE  # read enough for a controlRead
+      dat = self._wait_for_ack(spi, DACK, timeout, 0x13, length=RESP_HEADER_SIZE + preread_len)
 
       # get response length, then response
       response_len = struct.unpack("<H", dat[1:3])[0]
@@ -222,19 +259,26 @@ class PandaSpiHandle(BaseHandle):
         raise PandaSpiException(f"response length greater than max ({max_rx_len} {response_len})")
 
       # read rest
-      remaining = (response_len + 1) - preread_len
+      remaining = (response_len + CRC_SIZE) - preread_len
       if remaining > 0:
         dat += bytes(spi.readbytes(remaining))
 
-      dat = dat[:3 + response_len + 1]
-      if self._calc_checksum(dat) != 0:
+      dat = dat[:RESP_HEADER_SIZE + response_len + CRC_SIZE]
+      if crc32c(dat[:-CRC_SIZE]) != struct.unpack("<I", dat[-CRC_SIZE:])[0]:
         raise PandaSpiBadChecksum
+      if dat[3] != seq:
+        raise PandaSpiException(f"response to another transfer (sequence {dat[3]}, expected {seq})")
 
-      return dat[3:-1]
+      return dat[RESP_HEADER_SIZE:-CRC_SIZE]
 
   def _transfer(self, endpoint: int, data, timeout: int, max_rx_len: int = 1000, expect_disconnect: bool = False) -> bytes:
     logger.debug("starting transfer: endpoint=%d, max_rx_len=%d", endpoint, max_rx_len)
     logger.debug("==============================================")
+
+    # one counter value per transfer, kept on every retry of it (SWSR-410a)
+    with self._seq_lock:
+      seq = self._seq
+      self._seq = next_seq(seq)
 
     n = 0
     start_time = time.monotonic()
@@ -244,12 +288,19 @@ class PandaSpiHandle(BaseHandle):
       logger.debug("\ntry #%d", n)
       with self.dev.acquire() as spi:
         try:
-          return self._transfer_spidev(spi, endpoint, data, timeout, max_rx_len, expect_disconnect)
+          return self._transfer_spidev(spi, endpoint, data, timeout, max_rx_len, expect_disconnect, seq=seq)
         except PandaSpiException as e:
           exc = e
           logger.debug("SPI transfer failed, retrying", exc_info=True)
           if self.no_retry:
             break
+          if isinstance(e, PandaSpiSeqNack):
+            # the panda's counter is out of step with ours (another host session ran): start a new session.
+            # The panda answered with a clean one-byte reply, so it is ready for the next header already.
+            with self._seq_lock:
+              seq = 0
+              self._seq = 1
+            continue
 
           # ensure slave is in a consistent state and ready for the next transfer
           # (e.g. slave TX buffer isn't stuck full)
